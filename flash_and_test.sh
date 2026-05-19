@@ -29,21 +29,21 @@ h1_adb() {
     ssh h1 "adb shell su -c '$*'" 2>&1
 }
 
-# H1 paths
-KERNEL_IMAGE="/tmp/android14-kernel/arch/arm64/boot/Image"
+# H1 paths -- using saved v1 artifacts (verified working set)
+V1="/tmp/v1_artifacts"
 BOOT_ORIG="/tmp/boot_orig.img"
-BOOT_CUSTOM="/tmp/boot_custom_nosig.img"
+BOOT_CUSTOM="$V1/boot_nosig.img"
 PHONE_TMP="/data/local/tmp"
 
-# Module paths on H1
+# Module paths on H1 (from v1 artifacts)
 H1_MODS=(
-    "/tmp/android14-kernel/net/ieee802154/ieee802154.ko"
-    "/tmp/android14-kernel/net/mac802154/mac802154.ko"
-    "/tmp/dw3000-src/kernel/net/mcps802154/mcps802154.ko"
-    "/tmp/dw3000-src/kernel/net/mcps802154/mcps802154_region_fira.ko"
-    "/tmp/dw3000-src/kernel/net/mcps802154/mcps802154_region_nfcc_coex.ko"
-    "/tmp/dw3000-src/kernel/net/mcps802154/mcps802154_region_pctt.ko"
-    "/tmp/dw3000-src/kernel/drivers/net/ieee802154/dw3000.ko"
+    "$V1/ieee802154.ko"
+    "$V1/mac802154.ko"
+    "$V1/mcps802154.ko"
+    "$V1/mcps802154_region_fira.ko"
+    "$V1/mcps802154_region_nfcc_coex.ko"
+    "$V1/mcps802154_region_pctt.ko"
+    "$V1/dw3000.ko"
 )
 
 if [ "$RESTORE" = "1" ]; then
@@ -70,19 +70,13 @@ echo "Root: OK"
 
 if [ "$SKIP_FLASH" = "0" ]; then
     echo ""
-    echo "--- Checking kernel Image ---"
-    if ! ssh h1 "test -f $KERNEL_IMAGE" 2>/dev/null; then
-        echo "ERROR: Kernel Image not found at $KERNEL_IMAGE"
+    echo "--- Checking boot image ---"
+    if ! ssh h1 "test -f $BOOT_CUSTOM" 2>/dev/null; then
+        echo "ERROR: Boot image not found at $BOOT_CUSTOM"
         echo "Build it first: see BUILD.md"
         exit 1
     fi
-    ssh h1 "ls -la $KERNEL_IMAGE" 2>&1
-
-    echo ""
-    echo "--- Packing boot.img ---"
-    # Copy pack_boot.py to H1 if needed
-    scp pack_boot.py h1:/tmp/ 2>/dev/null || true
-    ssh h1 "python3 /tmp/pack_boot.py --kernel $KERNEL_IMAGE --orig $BOOT_ORIG --output $BOOT_CUSTOM" 2>&1
+    ssh h1 "ls -la $BOOT_CUSTOM" 2>&1
 
     echo ""
     echo "--- Backing up current boot image ---"
@@ -90,8 +84,8 @@ if [ "$SKIP_FLASH" = "0" ]; then
 
     echo ""
     echo "--- Pushing and flashing custom kernel ---"
-    ssh h1 "adb push $BOOT_CUSTOM $PHONE_TMP/boot_custom_nosig.img" 2>&1
-    h1_adb "dd if=$PHONE_TMP/boot_custom_nosig.img of=/dev/block/by-name/boot_a bs=4096"
+    ssh h1 "adb push $BOOT_CUSTOM $PHONE_TMP/boot_nosig.img" 2>&1
+    h1_adb "dd if=$PHONE_TMP/boot_nosig.img of=/dev/block/by-name/boot_a bs=4096"
     echo "Kernel flashed. Rebooting..."
 
     ssh h1 "adb reboot" 2>&1
