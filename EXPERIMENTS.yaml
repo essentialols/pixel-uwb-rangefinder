@@ -1,0 +1,25 @@
+project: pixel-uwb-rangefinder
+sensor: DW3000 (Pixel 7 Pro, Tensor G2)
+last_updated: 2026-05-19
+
+# Experiment log
+# Each .c, .py, and .sh file in the repo IS an experiment
+# Schema:
+#   - id: EXXX
+#     script: <filename>
+#     date: YYYY-MM-DD
+#     name: "<human-readable name>"
+#     purpose: "<research goal>"
+#     result: "<empirical finding>"
+#     verdict: success | dead_end | partial
+#     also_tested_by: [<IDs>]  # optional cross-refs
+
+experiments:
+
+  # Session 1: Reconnaissance (not yet started)
+  # Goals:
+  #   - Enumerate device nodes and sysfs interfaces
+  #   - Map ioctl/netlink surface
+  #   - Identify power-on sequence and AOC involvement
+  #   - Read DW3000 chip ID and firmware version
+  #   - Determine if CIR registers are accessible

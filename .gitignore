@@ -1,0 +1,24 @@
+*.o
+.claude/
+.project-state/
+
+# Compiled binaries (aarch64)
+uwb_probe
+uwb_range
+uwb_cir
+uwb_scan
+
+# Data files (tracked selectively, not by default)
+*.csv
+*.json
+*.jsonl
+*.txt
+*.ko
+
+# Tool binaries (but keep source files)
+tools/*
+!tools/*.py
+!tools/*.sh
+!tools/*.c
+!tools/*.h
+!tools/.gitkeep
