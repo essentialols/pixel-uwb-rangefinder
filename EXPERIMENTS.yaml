@@ -65,3 +65,11 @@ experiments:
     purpose: "Post-processing: peak detection, multipath identification, SNR estimation, CIR magnitude plot"
     result: "pending -- depends on E003 CIR data"
     verdict: pending
+
+  - id: E007
+    script: uwb_testmode.c
+    date: 2026-05-19
+    name: "Testmode netlink probe"
+    purpose: "Resolve nl802154 netlink family, enumerate ieee802154 PHY devices, test RX diagnostic commands. Fallback path if debugfs CIR is blocked."
+    result: "pending -- not yet run on device"
+    verdict: pending

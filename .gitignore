@@ -4,6 +4,10 @@
 
 # Compiled binaries (aarch64)
 uwb_probe
+uwb_cir_read
+uwb_diag
+uwb_regdump
+uwb_testmode
 uwb_range
 uwb_cir
 uwb_scan

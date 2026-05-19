@@ -1,6 +1,6 @@
 CC = $(shell which aarch64-linux-gnu-gcc 2>/dev/null || echo aarch64-unknown-linux-musl-gcc)
 CFLAGS = -static -Wall -Wextra -O2
-TARGETS = uwb_probe uwb_cir_read uwb_diag uwb_regdump
+TARGETS = uwb_probe uwb_cir_read uwb_diag uwb_regdump uwb_testmode
 PHONE_DIR = /data/local/tmp
 
 all: $(TARGETS)
@@ -15,6 +15,9 @@ uwb_diag: uwb_diag.c
 	$(CC) $(CFLAGS) -o $@ $<
 
 uwb_regdump: uwb_regdump.c
+	$(CC) $(CFLAGS) -o $@ $<
+
+uwb_testmode: uwb_testmode.c
 	$(CC) $(CFLAGS) -o $@ $<
 
 deploy: all
