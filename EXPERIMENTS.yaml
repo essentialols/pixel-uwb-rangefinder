@@ -1,6 +1,6 @@
 project: pixel-uwb-rangefinder
 sensor: DW3000 (Pixel 7 Pro, Tensor G2)
-last_updated: 2026-05-19
+last_updated: 2026-05-19T13:15:00
 
 # Experiment log
 # Each .c, .py, and .sh file in the repo IS an experiment
@@ -80,4 +80,69 @@ experiments:
     name: "Raw SPI register access"
     purpose: "Direct SPI access to DW3000 via spidev, bypassing ieee802154/mcps/dw3000 driver stack. Read chip ID, scan registers, read CIR_RAM directly."
     result: "pending -- requires custom kernel with SPI_SPIDEV=y (built, ready to flash)"
+    verdict: pending
+
+  # Session 2: Netlink & Android UWB Shell (2026-05-19)
+
+  - id: E009
+    script: uwb_pctt_rx.c
+    date: 2026-05-19
+    name: "PCTT PER_RX via mcps802154 netlink"
+    purpose: "Start PCTT continuous RX session via mcps802154 netlink (family 34) for CIR capture without ranging partner"
+    result: "SET_SCHEDULER returns EBUSY -- HAL holds scheduler lock. Cannot take scheduler while vendor HAL is running."
+    verdict: dead_end
+    notes: "Would need to stop vendor HAL first (system modification)"
+
+  - id: E010
+    script: uwb_nl_probe.c
+    date: 2026-05-19
+    name: "Netlink family probe"
+    purpose: "Resolve nl802154 (31) and mcps802154 (34) netlink families, query GET_HW and LIST_CALIBRATIONS"
+    result: "Both families resolve. GET_HW and LIST_CALIBRATIONS return ENOTSUP. Vendor build restricts these commands."
+    verdict: partial
+
+  - id: E011
+    script: tools/parse_calibration.py
+    date: 2026-05-19
+    name: "Calibration data extraction"
+    purpose: "Parse vendor UWB calibration from /vendor/etc/uwb/UWB-calibration.conf"
+    result: |
+      Extracted: 4 antennas (2 ports, GPIO-switched), per-channel/PRF antenna delays
+      (16409-16465 ticks ~257ns), TX power configs, PDoA LUTs for ant1-ant2 and ant1-ant3
+      pairs (31 entries each, ±90deg range), xtal_trim=23, temperature_ref=85C,
+      CCC v3 config, WiFi coex params. Factory xtal_trim=0x27 (39) differs from vendor config.
+    verdict: success
+
+  - id: E012
+    date: 2026-05-19
+    name: "Android UWB shell ranging session"
+    purpose: "Start FiRa ranging via 'cmd uwb start-fira-ranging-session' with diagnostics enabled"
+    result: |
+      MAJOR BREAKTHROUGH: Session starts successfully via Android shell. Ranging reports
+      flow at configured interval. UCI diagnostic notifications (ParsedDiagnosticNtfPacket)
+      received via logcat with 3 FrameReports per round (RCM TX, RCPU TX, RIM RX).
+      DiagramsFrameReportsFieldsFlags=7 (RSSI+AoA+CIR). CIR array is empty because no
+      responder exists (RX timeout). With a second UWB device, CIR data would populate.
+      Power stats confirm chip activity: 16ms TX, 10.2s RX, 268 wakes.
+    verdict: success
+    notes: |
+      Key command: cmd uwb start-fira-ranging-session -b -i <id> -c 9 -t controller
+        -r initiator -a <addr> -d <dest> -u ss-twr -l <interval_ms> -R enabled
+      Enable diagnostics first: cmd uwb enable-diagnostics-notification -c -r -a
+      Logcat filter: adb logcat | grep 'uwb_core::uci::notification'
+
+  - id: E013
+    script: tools/decode_range_ntf.py
+    date: 2026-05-19
+    name: "UCI notification decoder"
+    purpose: "Decode raw_ntf_data bytes from Android ranging reports"
+    result: "Successfully decodes UCI RANGE_DATA_NTF: sequence numbers, session ID, RCR, measurement status=0x02 (RX_TIMEOUT)"
+    verdict: success
+
+  - id: E014
+    script: tools/uwb_session.sh
+    date: 2026-05-19
+    name: "Automated ranging capture script"
+    purpose: "Orchestrate ranging session with logcat, CIR, and power stats capture"
+    result: "Written, not yet tested end-to-end"
     verdict: pending
