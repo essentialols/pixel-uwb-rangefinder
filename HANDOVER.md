@@ -1,116 +1,67 @@
 # Pixel UWB Rangefinder -- Session Handover
 
-**Date:** 2026-05-19 (session 1 -- tools built, pre-deployment)
+**Date:** 2026-05-19 (session 1 -- on-device results)
 **Project:** `~/Documents/GitHub/pixel-uwb-rangefinder`
+**Device:** Pixel 7 Pro on H1 (serial: 28071FDH3000R7), accessible via `ssh h1 "adb shell ..."`
 
-## Current status: SESSION 1 -- TOOLS READY, AWAITING DEPLOYMENT
+## Current status: BLOCKED -- kernel module signature mismatch
 
-Source code analysis complete. Six experiment tools built. Awaiting first on-device run.
+DW3000 hardware confirmed alive on SPI bus. All tools deployed and run.
+**The kernel modules (dw3000.ko, mcps802154.ko, ieee802154.ko, mac802154.ko)
+cannot be loaded** because LineageOS replaced the kernel and the vendor
+modules are signed for a different build. `MODULE_SIG_PROTECT` blocks loading.
 
-## Critical finding: debugfs CIR access path
+No debugfs. No netlink. No CIR access. The entire kernel-based path is blocked.
 
-The DW3000 driver exposes **raw CIR data through debugfs**, not netlink:
+## What we confirmed on-device
 
-```
-/sys/kernel/debug/dw3000/<spidev>/cir_data     # binary CIR records (read-only, blocks until data ready)
-/sys/kernel/debug/dw3000/<spidev>/cir_config    # "count N filter 0xM offset D" (read/write)
-/sys/kernel/debug/dw3000/<spidev>/power         # "0" or "1" (read/write)
-/sys/kernel/debug/dw3000/<spidev>/0xNNNNNN      # individual register files (read/write)
-```
+| Finding           | Detail                                                                     |
+| ----------------- | -------------------------------------------------------------------------- |
+| DW3000 SPI device | `spi16.0` on bus `10db0000.spi`                                            |
+| Device tree node  | `dw3xxx_prod@0` (compatible: `decawave,dw3000`)                            |
+| SPI controller    | SPI master 16, platform `10db0000.spi`                                     |
+| Chip power        | S2MPG13 PMIC + AOC GPIO for reset                                          |
+| Driver binding    | **NONE** -- no driver bound to spi16.0                                     |
+| Module files      | All present in `/vendor_dlkm/lib/modules/` and `/system_dlkm/lib/modules/` |
+| Module loading    | **BLOCKED** by MODULE_SIG_PROTECT (vermagic mismatch)                      |
+| Running kernel    | `6.1.145-android14-11-gec45f20f38ea-ab15260282` (LineageOS)                |
+| Module vermagic   | `6.1.145-android14-11-g66d850f9dea9-ab401307b609` (stock vendor)           |
+| Qorvo HAL         | Running but idle (nl802154 netlink family not registered)                  |
+| HAL architecture  | Uses libnl.so -> nl802154 netlink -> kernel ieee802154 stack               |
+| nl802154          | **Does not exist** (modules not loaded)                                    |
+| dw3000_core_tests | Loaded at boot (no deps, loaded by init)                                   |
 
-### CIR data structure (from dw3000_cir.h)
-
-```c
-struct dw3000_cir_record {
-    u8 real[3];  // 6.18 fixed-point signed
-    u8 imag[3];  // 6.18 fixed-point signed
-};
-// Per-capture metadata: count, filter, ts, utime, fp_power1/2/3, offset,
-// fp_index, pdoa, acc, type
-```
-
-### Key register addresses
-
-| Register      | Address      | Description                                       |
-| ------------- | ------------ | ------------------------------------------------- |
-| DEV_ID        | 0x0          | Chip identification                               |
-| SYS_CFG       | 0x10         | System config (PDOA mode, CIA enable)             |
-| SYS_STATUS    | 0x44         | Event flags (CIA_DONE at bit 10)                  |
-| RX_FINFO      | 0x4c         | RX frame info                                     |
-| RX_TIME       | 0x64         | RX timestamp (5 bytes)                            |
-| CIA_PDOA      | 0xc001c      | PDoA + TDoA results                               |
-| CIA_DIAG0     | 0xc0020      | Clock offset PPM                                  |
-| IP_DIAG0-8    | 0xc0028+     | IP diagnostic registers                           |
-| **CIR_RAM**   | **0x150000** | **Raw CIR memory (the prize)**                    |
-| DB_DIAG_SET_1 | 0x180000     | Full diagnostic set (0xe8 bytes)                  |
-| DB_DIAG_SET_2 | 0x1800e8     | Second diagnostic set                             |
-| CLK_CTRL      | 0x70036      | ACC_MEM_CLK_ON at bit 15 (enables CIR RAM access) |
-
-### Testmode netlink commands (ieee802154 genl)
-
-```
-START_RX_DIAG (1)     STOP_RX_DIAG (2)     GET_RX_DIAG (3)     CLEAR_RX_DIAG (4)
-OTP_READ (5)          OTP_WRITE (6)
-START_TX_CWTONE (7)   STOP_TX_CWTONE (8)
-START_CONTINUOUS_TX (9) STOP_CONTINUOUS_TX (10)
-SET_HRP_PARAMS (23)   SET_CHANNEL (24)
-```
-
-RSSI data: `cir_pwr` (17-bit) + `pacc_cnt` (11-bit) + `prf_64mhz` (1-bit) + `dgc_dec` (3-bit)
-
-### AOC role: GPIO only
-
-AOC **does not mediate UWB data**. It only controls 4 GPIO operations for the DW3000 reset pin:
-
-- GET_RESET_GPIO (0xCA), SET_RESET_GPIO (0xCB)
-- GET_DIRECTION (0xCC), SET_DIRECTION (0xCD)
-
-Direct SPI access to DW3000 goes through the kernel driver, not AOC.
-
-## Built tools (ready to deploy)
-
-| Tool                   | Type          | Experiment | Purpose                                                            |
-| ---------------------- | ------------- | ---------- | ------------------------------------------------------------------ |
-| `uwb_probe`            | C (aarch64)   | E001       | Full subsystem enumeration: devnodes, debugfs, SPI, netlink, dmesg |
-| `uwb_recon.sh`         | Shell         | E002       | Quick no-compile recon: modules, debugfs, power state, CIR config  |
-| `uwb_cir_read`         | C (aarch64)   | E003       | Read binary CIR data, decode 6.18 fixed-point, output CSV/JSON     |
-| `uwb_diag`             | C (aarch64)   | E004       | Read key diagnostic registers, show chip ID and CIA state          |
-| `uwb_regdump`          | C (aarch64)   | E005       | Dump all register files, diff mode for live register detection     |
-| `tools/analyze_cir.py` | Python (host) | E006       | CIR analysis: peak detection, multipath, SNR, plotting             |
-
-## Deployment commands
+## Access via H1
 
 ```bash
-# Build all tools
-make
+# Run any command on the Pixel 7 Pro
+ssh h1 "adb shell su -c '<command>'"
 
-# Deploy to device
-make deploy
-
-# Run reconnaissance
-adb shell su -c "setenforce 0; sh /data/local/tmp/uwb_recon.sh"
-
-# Run full probe
-adb shell su -c /data/local/tmp/uwb_probe
-
-# Read diagnostics
-adb shell su -c /data/local/tmp/uwb_diag
-
-# Dump all registers
-adb shell su -c /data/local/tmp/uwb_regdump
-
-# Read CIR (may need active ranging session)
-adb shell su -c /data/local/tmp/uwb_cir_read
-
-# Register diff (find live registers)
-adb shell su -c "/data/local/tmp/uwb_regdump -d"
+# Deploy a file
+scp <file> h1:/tmp/ && ssh h1 "adb push /tmp/<file> /data/local/tmp/"
 ```
 
-## Session 2 plan
+## Unblocking strategy
 
-1. Deploy and run E001-E005 on device
-2. Identify actual debugfs path (spi device name)
-3. Read chip ID to confirm DW3000 variant
-4. Map which registers are readable vs locked
-5. Attempt CIR read (may need active ranging or PCTT mode)
-6. If CIR blocked: investigate testmode netlink as alternative path
+**Recommended: build modules from AOSP source for the LineageOS kernel.**
+
+The full chain is open-source:
+
+1. `ieee802154.ko` -- Linux kernel tree
+2. `mac802154.ko` -- Linux kernel tree
+3. `mcps802154.ko` -- AOSP `kernel/google-modules/uwb/qorvo/dw3000/mac/`
+4. `dw3000.ko` -- AOSP `kernel/google-modules/uwb/qorvo/dw3000/kernel/drivers/net/ieee802154/`
+5. FiRa/PCTT regions -- AOSP `kernel/google-modules/uwb/qorvo/dw3000/mac/`
+
+Need the LineageOS kernel headers matching `6.1.145-android14-11-gec45f20f38ea`.
+
+## Session 1 experiment results
+
+| ID   | Tool         | Result                                               |
+| ---- | ------------ | ---------------------------------------------------- |
+| E001 | uwb_probe    | DW3000 found on spi16.0, no driver bound, no debugfs |
+| E002 | uwb_recon.sh | Confirmed module list, no ieee802154 class           |
+| E004 | uwb_diag     | No debugfs to read (requires driver)                 |
+| E005 | uwb_regdump  | No debugfs to dump (requires driver)                 |
+| E007 | uwb_testmode | nl802154 family not registered (modules not loaded)  |
+| E003 | uwb_cir_read | Not attempted (requires debugfs)                     |

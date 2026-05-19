@@ -1,86 +1,118 @@
 # Frontier Analysis -- What's Real, What's Not, What's Next
 
-**Date:** 2026-05-19, session 1 (tools built, pre-deployment)
+**Date:** 2026-05-19, session 1 (on-device results)
 
-## Verified facts (from AOSP source analysis)
+## Critical finding: kernel module signature mismatch
 
-### Driver architecture
+The DW3000 kernel modules exist on the filesystem but **cannot be loaded** because
+LineageOS replaced the kernel. The vendor modules are signed for
+`6.1.145-android14-11-g66d850f9dea9` but the running kernel is
+`6.1.145-android14-11-gec45f20f38ea`. `MODULE_SIG_PROTECT` blocks loading.
 
-- DW3000 driver is **fully open-source** in AOSP google-modules (GPLv2 + Qorvo commercial dual-license)
-- Uses SPI bus (not I2C) -- different from VL53L1 ToF which uses I2C
-- Registers as ieee802154 PHY device
-- Creates wpan network interface
-- Full FiRa + PCTT MAC stack is open-source
+**Consequence:** No debugfs, no CIR access, no netlink interface. The entire
+kernel-based access path we designed tools for is blocked until we resolve
+the module loading issue.
 
-### CIR access path (confirmed in source)
+## Verified facts (on-device, session 1)
 
-- `dw3000_cir_data` struct holds complex I/Q CIR samples (6.18 fixed-point, 3 bytes each)
-- Exposed via debugfs: `cir_data` (binary read, blocks until available), `cir_config` (text r/w)
-- Default 20 CIR records per capture, configurable
-- CIR RAM at register `0x150000`
-- CIR data includes: fp_index, fp_power1/2/3, PDoA, timestamp, accumulation count
-- ACC_MEM_CLK_ON bit (CLK_CTRL register) must be set to read CIR RAM
+### Hardware confirmed
 
-### Diagnostic access (confirmed in source)
+- DW3000 is on **SPI bus spi16.0** (`/sys/bus/spi/devices/spi16.0`)
+- SPI controller at `10db0000.spi` (SPI master 16)
+- Device tree node: `dw3xxx_prod@0` (compatible: `decawave,dw3000`)
+- Power supplies: S2MPG13 PMIC, AOC gpiochip (reset GPIO)
+- **No driver bound** to the SPI device (no `driver` symlink)
 
-- Full diagnostic register set (DB_DIAG) at `0x180000` (0xe8 bytes per set, two sets)
-- CIA registers: DIAG0 (clock offset PPM), TDOA, PDOA, IP diagnostics
-- All registers exposed as individual debugfs files (read/write)
-- Testmode netlink: START/STOP/GET/CLEAR_RX_DIAG, CW tone, continuous TX
+### Module status
 
-### AOC role (confirmed in source)
+- `dw3000.ko` -- present at `/vendor_dlkm/lib/modules/dw3000.ko` (648KB) -- **NOT loaded**
+- `mcps802154.ko` -- present at `/vendor_dlkm/lib/modules/mcps802154.ko` (407KB) -- **NOT loaded**
+- `mcps802154_region_fira.ko` -- present -- **NOT loaded**
+- `mcps802154_region_pctt.ko` -- present -- **NOT loaded**
+- `mcps802154_region_nfcc_coex.ko` -- present -- **NOT loaded**
+- `ieee802154.ko` -- present at `/system_dlkm/lib/modules/ieee802154.ko` -- **NOT loaded**
+- `mac802154.ko` -- present at `/system_dlkm/lib/modules/mac802154.ko` -- **NOT loaded**
+- `dw3000_core_tests.ko` -- **LOADED** (no deps, loaded at boot by init)
 
-- AOC only handles DW3000 reset GPIO (4 commands: get/set pin, get/set direction)
-- NOT a data mediator -- all UWB data goes through kernel SPI driver directly
+### Module dependency chain
 
-### Kernel module set
+```
+ieee802154 (no deps)
+  -> mac802154 (depends: ieee802154)
+    -> mcps802154 (depends: mac802154)
+      -> dw3000 (depends: mcps802154)
+      -> mcps802154_region_fira (depends: mcps802154)
+      -> mcps802154_region_pctt (depends: mcps802154)
+```
 
-- `dw3000.ko` -- SPI driver
-- `mcps802154.ko` -- IEEE 802.15.4 MAC
-- `mcps802154_region_fira.ko` -- FiRa ranging
-- `mcps802154_region_pctt.ko` -- PHY Compliance Test Tool
-- `mcps802154_region_nfcc_coex.ko` -- NFC coexistence
-- `aoc_uwb_platform_drv.ko` -- AOC GPIO bridge
-- `aoc_uwb_service_dev.ko` -- AOC GPIO service
+### Qorvo HAL architecture
 
-## Unknown (must verify on-device)
+- HAL binary: `/vendor/bin/hw/android.hardware.qorvo.uwb.service` (338KB)
+- Runs as user `uwb` with `NET_ADMIN NET_RAW` capabilities
+- Uses `libnl.so` for **nl802154 netlink** communication with kernel
+- References `dw3000-hal` source paths (Qorvo's proprietary HAL)
+- Has `helper_open`/`helper_start` functions that manage the kernel stack
+- **Currently idle** -- HAL is running but nl802154 family doesn't exist
+- No direct SPI FDs open (only binder sockets)
 
-1. **Is debugfs mounted and accessible?** Need root + possibly `mount -t debugfs none /sys/kernel/debug`
-2. **What is the SPI device name?** (e.g., spi0.0, spi1.0, spi2.0) -- determines debugfs path
-3. **Is the DW3000 powered on at boot?** Or does the Android UWB HAL control power?
-4. **Are all debugfs register files readable?** Google may have restricted some
-5. **Does cir_data block or return empty without active ranging?** Source shows it blocks on a completion
-6. **DW3000 chip variant?** DW3000 vs DW3720 vs DW3120 -- firmware and CIR differ
-7. **Is the Android UWB HAL service holding exclusive SPI access?**
-8. **Does PCTT mode work for single-device CIR capture?**
-9. **Are testmode netlink commands compiled in?** (Google stripped ToF ioctls -- may strip these too)
+### Kernel info
 
-## Dead ends (nothing confirmed yet)
+- Kernel: `6.1.145-android14-11-gec45f20f38ea-ab15260282` (LineageOS)
+- 62 loadable modules total
+- `CONFIG_MODULE_SIG=y`, `CONFIG_MODULE_SIG_PROTECT=y`
+- `CONFIG_MODULE_SIG_FORCE` is NOT set
+- `modules_disabled=0` (loading nominally allowed)
+- `CONFIG_MAC802154=m` (compiled as module, not built-in)
 
-(No experiments run yet)
+## Dead ends
 
-## Next leads (ranked by feasibility)
+1. **insmod from shell** -- EPERM from MODULE_SIG_PROTECT signature verification
+2. **finit_module() syscall directly** -- Same EPERM
+3. **Copy to /tmp then insmod** -- Same EPERM
+4. **system_dlkm vs vendor_dlkm** -- Both have same vermagic mismatch
+5. **/dev/mem** -- Does not exist on this Android build
+6. **/dev/spidev** -- spidev module also can't be loaded
 
-### Immediate (run on-device)
+## Paths forward (ranked by feasibility)
 
-1. **uwb_recon.sh** -- zero risk, no compilation, answers questions 1-3 immediately
-2. **uwb_probe** -- comprehensive enumeration, answers questions 1-4
-3. **uwb_diag** -- read chip ID (question 6), check register accessibility (question 4)
-4. **uwb_regdump -d** -- find live/changing registers, understand chip state
+### A. Build modules from AOSP source for this kernel (RECOMMENDED)
 
-### If debugfs works
+- The DW3000 driver + full MAC stack is open-source in AOSP
+- Need: kernel headers for `6.1.145-android14-11-gec45f20f38ea`
+- LineageOS publishes kernel source: check `kernel_google_gs201` repo
+- Build ieee802154 + mac802154 + mcps802154 + dw3000 as modules
+- Sign with the LineageOS signing key (or disable module sig verify)
+- **This is the correct long-term fix**
 
-5. **uwb_cir_read** -- attempt CIR capture (answers question 5)
-6. **uwb_cir_read -c 64** -- larger CIR window for better multipath resolution
+### B. Magisk module to load at boot
 
-### If CIR blocked (needs active ranging)
+- Create a Magisk module that loads the vendor .ko files during early boot
+- May work because `dw3000_core_tests.ko` DID load during init
+- The signature check might only apply to post-boot loading
+- Quick to try, may not work if sig check applies to init too
 
-7. **PCTT mode via netlink** -- single-device PHY test mode may trigger CIR capture
-8. **Testmode RX_DIAG** -- alternative to CIR for diagnostic data
-9. **Power on via debugfs** -- write "1" to power file, then try CIR
-10. **Kill Android UWB HAL** -- stop competing service, take direct control
+### C. Disable module signature verification
 
-### If testmode also blocked
+- Kernel config has `MODULE_SIG_FORCE` NOT set
+- May be possible to flip `CONFIG_MODULE_SIG_PROTECT` via kernel patch
+- Requires kernel rebuild (same as option A)
 
-11. **BPF kprobe on CIR read function** -- intercept CIR data from kernel memory (proven on ToF project)
-12. **Direct SPI register access** -- bypass driver, read CIR_RAM at 0x150000 directly
+### D. Use stock Google kernel + vendor modules
+
+- Switch to stock Pixel kernel where signatures match
+- Would require reflashing boot partition
+- Fastest path to get modules loaded
+
+### E. Userspace SPI access via custom kernel module
+
+- Write a minimal char device driver that provides raw SPI access
+- Build it against the LineageOS kernel headers
+- This bypasses the entire mac/mcps stack but gives us raw register access
+- Could read CIR_RAM (0x150000) directly via SPI
+
+## Next session priorities
+
+1. Check if LineageOS kernel source is available for this exact build
+2. Attempt to build ieee802154 + mac802154 + mcps802154 + dw3000 from AOSP source
+3. If build succeeds, test loading on device
+4. Alternative: try Magisk boot-time module injection
