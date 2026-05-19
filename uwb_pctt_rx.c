@@ -39,25 +39,25 @@
 #include <linux/netlink.h>
 #include <linux/genetlink.h>
 
-/* mcps802154 netlink (from mcps802154_nl.h) */
+/* mcps802154 netlink (from kernel nl_mcps802154.h, verified against AOSP source) */
 #define MCPS802154_GENL_NAME "mcps802154"
 
 enum mcps802154_commands {
-    MCPS802154_CMD_UNSPEC,
-    MCPS802154_CMD_GET_HW,
-    MCPS802154_CMD_NEW_HW,
-    MCPS802154_CMD_SET_SCHEDULER,
-    MCPS802154_CMD_SET_SCHEDULER_PARAMS,
-    MCPS802154_CMD_CALL_SCHEDULER,
-    MCPS802154_CMD_SET_SCHEDULER_REGIONS,
-    MCPS802154_CMD_SET_REGIONS_PARAMS,
-    MCPS802154_CMD_CALL_REGION,
-    MCPS802154_CMD_SET_CALIBRATIONS,
-    MCPS802154_CMD_GET_CALIBRATIONS,
-    MCPS802154_CMD_LIST_CALIBRATIONS,
-    MCPS802154_CMD_TESTMODE,
-    MCPS802154_CMD_CLOSE_SCHEDULER,
-    MCPS802154_CMD_GET_PWR_STATS,
+    MCPS802154_CMD_UNSPEC,                 /* 0 */
+    MCPS802154_CMD_GET_HW,                 /* 1 */
+    MCPS802154_CMD_NEW_HW,                 /* 2 */
+    MCPS802154_CMD_SET_SCHEDULER,          /* 3 */
+    MCPS802154_CMD_SET_SCHEDULER_PARAMS,   /* 4 */
+    MCPS802154_CMD_CALL_SCHEDULER,         /* 5 */
+    MCPS802154_CMD_SET_SCHEDULER_REGIONS,  /* 6 */
+    MCPS802154_CMD_SET_REGIONS_PARAMS,     /* 7 */
+    MCPS802154_CMD_CALL_REGION,            /* 8 */
+    MCPS802154_CMD_SET_CALIBRATIONS,       /* 9 */
+    MCPS802154_CMD_GET_CALIBRATIONS,       /* 10 */
+    MCPS802154_CMD_LIST_CALIBRATIONS,      /* 11 */
+    MCPS802154_CMD_TESTMODE,               /* 12 */
+    MCPS802154_CMD_CLOSE_SCHEDULER,        /* 13 */
+    MCPS802154_CMD_GET_PWR_STATS,          /* 14 */
 };
 
 enum mcps802154_attrs {
@@ -161,6 +161,7 @@ enum pctt_session_param_attrs {
 static int nl_sock = -1;
 static uint16_t mcps_family = 0;
 static uint32_t nl_seq = 0;
+static uint32_t nl_pid = 0;
 
 static char *nla_buf;
 static int nla_off;
@@ -210,12 +211,13 @@ static int send_cmd(uint8_t cmd) {
 
     nlh->nlmsg_len = attr_start + nla_off;
     nlh->nlmsg_type = mcps_family;
-    nlh->nlmsg_flags = NLM_F_REQUEST;
+    nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
     nlh->nlmsg_seq = ++nl_seq;
-    nlh->nlmsg_pid = getpid();
+    nlh->nlmsg_pid = nl_pid;
 
-    if (send(nl_sock, buf, nlh->nlmsg_len, 0) < 0) {
-        perror("send");
+    struct sockaddr_nl dst = { .nl_family = AF_NETLINK };
+    if (sendto(nl_sock, buf, nlh->nlmsg_len, 0, (void *)&dst, sizeof(dst)) < 0) {
+        perror("sendto");
         return -1;
     }
 
@@ -224,8 +226,17 @@ static int send_cmd(uint8_t cmd) {
     if (rlen < 0) { perror("recv"); return -1; }
 
     struct nlmsghdr *rh = (void *)resp;
+    fprintf(stderr, "  [dbg] recv %d bytes, type=%d seq=%d flags=0x%x\n",
+            rlen, rh->nlmsg_type, rh->nlmsg_seq, rh->nlmsg_flags);
+    if (rlen >= 20) {
+        fprintf(stderr, "  [dbg] hex[16..35]:");
+        for (int i = 16; i < (rlen < 36 ? rlen : 36); i++)
+            fprintf(stderr, " %02x", (unsigned char)resp[i]);
+        fprintf(stderr, "\n");
+    }
     if (rh->nlmsg_type == NLMSG_ERROR) {
         int err = *(int *)(resp + NLMSG_HDRLEN);
+        fprintf(stderr, "  [dbg] raw error field: %d (0x%08x)\n", err, (unsigned)err);
         if (err != 0) {
             fprintf(stderr, "  Error: %d (%s)\n", -err, strerror(-err));
             return err;
@@ -251,6 +262,7 @@ static int resolve_family(const char *name) {
     nlh->nlmsg_type = GENL_ID_CTRL;
     nlh->nlmsg_flags = NLM_F_REQUEST;
     nlh->nlmsg_seq = ++nl_seq;
+    nlh->nlmsg_pid = nl_pid;
     gh->cmd = 3; /* CTRL_CMD_GETFAMILY */
     gh->version = 1;
 
@@ -259,7 +271,8 @@ static int resolve_family(const char *name) {
     a->nla_type = 2; /* CTRL_ATTR_FAMILY_NAME */
     memcpy((char *)a + NLA_HDRLEN, name, nlen);
 
-    send(nl_sock, buf, nlh->nlmsg_len, 0);
+    struct sockaddr_nl dst = { .nl_family = AF_NETLINK };
+    sendto(nl_sock, buf, nlh->nlmsg_len, 0, (void *)&dst, sizeof(dst));
 
     char resp[4096];
     int rlen = recv(nl_sock, resp, sizeof(resp), 0);
@@ -313,8 +326,14 @@ int main(int argc, char *argv[]) {
     nl_sock = socket(AF_NETLINK, SOCK_RAW, NETLINK_GENERIC);
     if (nl_sock < 0) { perror("socket"); return 1; }
 
-    struct sockaddr_nl sa = { .nl_family = AF_NETLINK };
+    struct sockaddr_nl sa = { .nl_family = AF_NETLINK, .nl_pid = 0 };
     bind(nl_sock, (void *)&sa, sizeof(sa));
+    {
+        struct sockaddr_nl bound;
+        socklen_t blen = sizeof(bound);
+        getsockname(nl_sock, (void *)&bound, &blen);
+        nl_pid = bound.nl_pid;
+    }
 
     int fid = resolve_family(MCPS802154_GENL_NAME);
     if (fid < 0) {
@@ -346,6 +365,7 @@ int main(int argc, char *argv[]) {
     printf("Step 2: SET_SCHEDULER_REGIONS pctt\n");
     nla_init(attr_buf);
     nla_put_u32(MCPS802154_ATTR_HW, 0);
+    nla_put_string(MCPS802154_ATTR_SCHEDULER_NAME, "on_demand");
     {
         int regions_nest = nla_nest_start(MCPS802154_ATTR_SCHEDULER_REGIONS);
         int region_nest = nla_nest_start(1); /* first region */
@@ -361,8 +381,10 @@ int main(int argc, char *argv[]) {
     printf("Step 3: PCTT SESSION_INIT\n");
     nla_init(attr_buf);
     nla_put_u32(MCPS802154_ATTR_HW, 0);
+    nla_put_string(MCPS802154_ATTR_SCHEDULER_NAME, "on_demand");
     {
         int call_nest = nla_nest_start(MCPS802154_ATTR_SCHEDULER_REGION_CALL);
+        nla_put_string(MCPS802154_REGION_ATTR_NAME, "pctt");
         nla_put_u32(MCPS802154_REGION_ATTR_CALL, PCTT_CALL_SESSION_INIT);
         nla_put_u32(MCPS802154_REGION_ATTR_ID, 0);
         {
@@ -379,8 +401,10 @@ int main(int argc, char *argv[]) {
     printf("Step 4: PCTT SESSION_SET_PARAMS (channel=%d)\n", channel);
     nla_init(attr_buf);
     nla_put_u32(MCPS802154_ATTR_HW, 0);
+    nla_put_string(MCPS802154_ATTR_SCHEDULER_NAME, "on_demand");
     {
         int call_nest = nla_nest_start(MCPS802154_ATTR_SCHEDULER_REGION_CALL);
+        nla_put_string(MCPS802154_REGION_ATTR_NAME, "pctt");
         nla_put_u32(MCPS802154_REGION_ATTR_CALL, PCTT_CALL_SESSION_SET_PARAMS);
         nla_put_u32(MCPS802154_REGION_ATTR_ID, 0);
         {
@@ -408,13 +432,15 @@ int main(int argc, char *argv[]) {
     printf("Step 5: PCTT PER_RX (listening for %d us)\n", t_win);
     nla_init(attr_buf);
     nla_put_u32(MCPS802154_ATTR_HW, 0);
+    nla_put_string(MCPS802154_ATTR_SCHEDULER_NAME, "on_demand");
     {
         int call_nest = nla_nest_start(MCPS802154_ATTR_SCHEDULER_REGION_CALL);
+        nla_put_string(MCPS802154_REGION_ATTR_NAME, "pctt");
         nla_put_u32(MCPS802154_REGION_ATTR_CALL, PCTT_CALL_SESSION_CMD);
         nla_put_u32(MCPS802154_REGION_ATTR_ID, 0);
         {
             int params_nest = nla_nest_start(MCPS802154_REGION_ATTR_CALL_PARAMS);
-            nla_put_u32(PCTT_CALL_ATTR_CMD_ID, PCTT_ID_ATTR_PER_RX);
+            nla_put_u8(PCTT_CALL_ATTR_CMD_ID, PCTT_ID_ATTR_PER_RX);
             nla_nest_end(params_nest);
         }
         nla_nest_end(call_nest);

@@ -146,3 +146,47 @@ experiments:
     purpose: "Orchestrate ranging session with logcat, CIR, and power stats capture"
     result: "Written, not yet tested end-to-end"
     verdict: pending
+
+  # Session 3: CIR capture without second device (2026-05-19)
+
+  - id: E015
+    script: uwb_pctt_rx.c
+    date: 2026-05-19
+    name: "PCTT PER_RX netlink fixes"
+    purpose: "Fix uwb_pctt_rx netlink protocol bugs to enable continuous RX via PCTT"
+    result: |
+      Fixed 5 bugs: (1) NLM_F_ACK flag missing, (2) nlmsg_pid wrong (getpid vs getsockname),
+      (3) send vs sendto, (4) missing ATTR_SCHEDULER_NAME and REGION_ATTR_NAME in CALL_REGION,
+      (5) PCTT_CALL_ATTR_CMD_ID sent as u32 not u8 (kernel policy requires NLA_U8).
+      All 5 steps now return ACK. Verified enum values match AOSP kernel headers.
+    verdict: success
+    notes: "Command enum values verified against /tmp/dw3000-src/mac/include/net/mcps802154_nl.h"
+
+  - id: E016
+    date: 2026-05-19
+    name: "FiRa ftrace analysis"
+    purpose: "Capture DW3000 driver events during FiRa session to understand TX-RX-Sleep cycle"
+    result: |
+      Each ranging slot: wakeup -> TX (TXFRS) -> RX enable (1.85ms window) -> RXPTO (preamble timeout)
+      -> deep sleep (480ms). 25 TX frames, 8 RX enables in 7s at 500ms interval. No rx_get_frame
+      or rx_get_error_frame events: RXPTO doesn't trigger frame processing path. CIR accumulator
+      populated during RX but never read on timeout. Testmode not compiled (CONFIG_MCPS802154_TESTMODE
+      disabled). Tracepoints confirmed: dw3000_read_frame_cir_data exists but never fires.
+    verdict: success
+    notes: "Saved full trace to /tmp/uwb_ftrace.txt on local machine"
+
+  - id: E017
+    date: 2026-05-19
+    name: "Binary patch vendor PCTT module"
+    purpose: "NOP the cbnz error check at 0x1e78 in pctt_call_session_control to skip ENETDOWN gate"
+    result: |
+      Binary-patched vendor mcps802154_region_pctt.ko: replaced cbnz w0 (0x35fff3e0) with NOP
+      (0xd503201f) at file offset 0x6530 (.text+0x1e78). Vendor module has matching CRCs so
+      insmod succeeds. All 5 PCTT steps return ACK (error=0). However chip power remains 0:
+      the mcps802154_reschedule path doesn't start the chip because the FSM start_stop_request
+      flag is cleared after HAL restart. Need to run PCTT while HAL has device started.
+    verdict: partial
+    notes: |
+      First attempt patched bl instruction at 0x1e74 but ELF relocation overwrote it at load time.
+      Correct approach: patch the cbnz check, not the bl. Module installed in Magisk overlay at
+      /data/adb/modules/uwb-pctt-patched/ as fallback. Relay consensus: RXPTO CIR hook is better path.

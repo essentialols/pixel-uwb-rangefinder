@@ -21,14 +21,39 @@ We have **two working paths** to CIR data, both require a second UWB device:
 - **Pros**: Raw hardware data, configurable via cir_config
 - **Cons**: Timing-dependent, chip must be actively receiving
 
-## What We Need
+## Session 3: Single-Device CIR Capture Attempts (2026-05-19)
 
-**A second UWB device** to act as ranging partner. Options:
+### What we tried without a second device
 
-1. Another Android phone with UWB (Pixel 6 Pro+, Samsung S21+, iPhone 11+)
-2. Qorvo DWM3000 evaluation board (~$30-50)
-3. Apple U1 AirTag (triggers UWB when in proximity to iPhone)
-4. Any FiRa-compatible UWB device
+| Approach                        | Result                                                                                                                                           |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| PCTT PER_RX (continuous RX)     | All 5 netlink steps pass after fixing bugs + binary patching vendor module. Chip doesn't start: FSM start_stop_request cleared after HAL restart |
+| debugfs cir_data during FiRa    | I/O error: driver holds SPI lock, chip in deep sleep between slots                                                                               |
+| ftrace/kprobes on CIR functions | Confirmed CIR only read on successful frame RX, never on RXPTO. Testmode not compiled                                                            |
+| UCI vendor commands / radar     | No vendor cmd interface in cmd uwb. Radar fails status_code=4 (not supported)                                                                    |
+| Raw SPI to CIR_RAM              | Not attempted: /dev/mem doesn't exist, driver holds SPI lock                                                                                     |
+
+### Key ftrace finding
+
+Each FiRa slot: wakeup -> TX (TXFRS) -> RX enable (1.85ms) -> RXPTO -> deep sleep (480ms).
+CIR accumulator IS populated during the 1.85ms RX window (even with no signal), but the driver
+only reads it on successful frame reception, not on RXPTO.
+
+### Best remaining path: RXPTO CIR hook
+
+Binary-patch dw3000.ko to call CIR read on RXPTO interrupt (before deep sleep). This works with
+existing FiRa sessions, no second device needed. The CIR accumulator contains noise floor data
+from each RX window. 4/4 relays agree this is the strongest approach.
+
+### Alternative: PCTT with HAL-started chip
+
+Run PCTT immediately after HAL starts a FiRa session (while chip is still online). The NOP-patched
+PCTT module bypasses the ENETDOWN check; if start_stop_request is still true, the chip should stay
+powered for continuous RX.
+
+## What We Need (revised)
+
+**Either** a second UWB device **or** a patched dw3000.ko that reads CIR on RXPTO.
 
 ## What Works Without a Partner
 
