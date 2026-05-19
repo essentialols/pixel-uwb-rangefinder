@@ -16,10 +16,52 @@ last_updated: 2026-05-19
 
 experiments:
 
-  # Session 1: Reconnaissance (not yet started)
-  # Goals:
-  #   - Enumerate device nodes and sysfs interfaces
-  #   - Map ioctl/netlink surface
-  #   - Identify power-on sequence and AOC involvement
-  #   - Read DW3000 chip ID and firmware version
-  #   - Determine if CIR registers are accessible
+  # Session 1: Reconnaissance (2026-05-19)
+
+  - id: E001
+    script: uwb_probe.c
+    date: 2026-05-19
+    name: "UWB subsystem probe"
+    purpose: "Enumerate all UWB device nodes, sysfs, debugfs (especially dw3000 CIR interface), SPI devices, loaded modules, netlink families, and dmesg boot messages"
+    result: "pending -- not yet run on device"
+    verdict: pending
+
+  - id: E002
+    script: uwb_recon.sh
+    date: 2026-05-19
+    name: "Quick recon shell script"
+    purpose: "No-compile reconnaissance: modules, SPI, debugfs, IEEE 802.15.4 interfaces, dmesg. Deployable without cross-compiler."
+    result: "pending -- not yet run on device"
+    verdict: pending
+
+  - id: E003
+    script: uwb_cir_read.c
+    date: 2026-05-19
+    name: "CIR data reader"
+    purpose: "Read raw Channel Impulse Response data via debugfs cir_data. Decode 6.18 fixed-point I/Q to float. Extract fp_index, fp_power, PDoA, timestamps."
+    result: "pending -- not yet run on device"
+    verdict: pending
+
+  - id: E004
+    script: uwb_diag.c
+    date: 2026-05-19
+    name: "Diagnostic register reader"
+    purpose: "Read key DW3000 registers (chip ID, system status, CIA diagnostics, IP diagnostics) via debugfs register files"
+    result: "pending -- not yet run on device"
+    verdict: pending
+
+  - id: E005
+    script: uwb_regdump.c
+    date: 2026-05-19
+    name: "Full register dump"
+    purpose: "Dump all debugfs register files sorted by address. Diff mode: dump twice with 2s gap, identify live registers."
+    result: "pending -- not yet run on device"
+    verdict: pending
+
+  - id: E006
+    script: tools/analyze_cir.py
+    date: 2026-05-19
+    name: "CIR analysis"
+    purpose: "Post-processing: peak detection, multipath identification, SNR estimation, CIR magnitude plot"
+    result: "pending -- depends on E003 CIR data"
+    verdict: pending
