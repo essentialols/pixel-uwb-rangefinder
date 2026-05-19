@@ -233,3 +233,27 @@ experiments:
       The correct fix requires rebuilding dw3000.ko from source against the running
       kernel (commit ec45f20f38ea, 6.1.145) or disabling dm-verity to replace the
       vendor module with a source-patched version.
+
+  - id: E020
+    date: 2026-05-19
+    name: "Binary-patch vendor dw3000.ko: CIR read on RXPTO via trampoline"
+    purpose: "Redirect RXPTO handler to trampoline at dw3000_spitests that calls dw3000_read_frame_cir_data"
+    result: |
+      Applied 3 binary patches to vendor dw3000.ko:
+      (1) At .text+0x10678: b.cs -> B to trampoline (0x14000324)
+      (2) At .text+0x11308: 8-instruction trampoline in dw3000_spitests space:
+          cmp/b.cs (error check), mov x0-x2 (args), bl dw3000_read_frame_cir_data
+          (relative offset to 0xda10), b back to 0x1067c, brk
+      (3) At .text+0xda98: tbnz (CIA flag check) -> B (unconditional, bypass CIA)
+      Module loaded successfully via hot-swap. FiRa session runs (power=1).
+      CIR data still not captured: debugfs cir_data returns I/O error.
+      Cannot verify trampoline execution (kptr_restrict blocks address lookup,
+      ftrace event enable blocked by permissions). The trampoline might execute
+      but read_frame_cir_data could fail silently due to chip state during RXPTO
+      (CIA registers may not be readable, SPI access may conflict).
+    verdict: partial
+    notes: |
+      Trampoline technique is sound (ToF project used similar binary patches).
+      Verification blocked by Android security restrictions (kptr_restrict,
+      ftrace permissions). Need either: (a) source-built module for proper
+      debugging, or (b) root shell with full CAP_SYS_ADMIN for ftrace access.
