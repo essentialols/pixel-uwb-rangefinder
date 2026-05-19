@@ -209,3 +209,27 @@ experiments:
       Magisk overlay does NOT work for kernel modules (loaded before overlays applied).
       Next: binary-patch dw3000.ko ISR to read CIR accumulator on RXPTO instead of
       trying to keep PCTT and FiRa coexisting.
+
+  - id: E019
+    date: 2026-05-19
+    name: "dw3000.ko RXPTO ISR analysis for CIR hook"
+    purpose: "Analyze vendor dw3000.ko binary to find patch point for CIR read on RXPTO"
+    result: |
+      Disassembled dw3000_isr_handle_rxto_event (0x105f8-0x106d8, 224 bytes).
+      Handler: spin_lock -> check state -> power_stats -> increment rx_timeout_count
+      -> bl mcps802154_rx_timeout (at 0x1068c) -> spin_unlock -> return.
+      No call to dw3000_read_frame_cir_data or CIR-related functions.
+      CIR read is only called from dw3000_isr_handle_rx_call_handler (0x12d74)
+      which is reached via dw3000_isr_handle_rxfcg_event (successful frame RX).
+      Binary patching requires trampoline (4 instructions for CIR call setup),
+      but only 1 instruction of dead code available (BRK at 0x106d4).
+      Alternative: redirect mcps802154_rx_timeout relocation to mcps802154_rx_frame
+      but would crash due to missing frame setup. Concluded that ISR binary
+      patching without source rebuild is impractical.
+    verdict: dead_end
+    notes: |
+      Key symbols: dw3000_isr (0xfc1c), rxto_event (0x105f8), rxfcg_event (0x10360),
+      rx_call_handler (0x12d74), read_frame_cir_data (0xda10), read_cir_data (0xdf68).
+      The correct fix requires rebuilding dw3000.ko from source against the running
+      kernel (commit ec45f20f38ea, 6.1.145) or disabling dm-verity to replace the
+      vendor module with a source-patched version.

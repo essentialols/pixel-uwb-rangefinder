@@ -55,6 +55,17 @@ powered for continuous RX.
 
 **Either** a second UWB device **or** a patched dw3000.ko that reads CIR on RXPTO.
 
+### Unblocking options (ranked by effort)
+
+1. **Get a DWM3000 eval board** (~$30-50 from Qorvo/Mouser). Acts as ranging responder.
+   CIR capture works immediately via existing UCI diagnostics pipeline.
+2. **Disable dm-verity + replace dw3000.ko** with source-patched version that reads CIR on
+   RXPTO. Requires: `avbctl disable-verity`, reboot, remount vendor_dlkm rw, copy patched
+   module, reboot. Source patch: add `dw3000_read_frame_cir_data(dw, NULL, 0)` call in
+   `dw3000_isr_handle_rxto_event` before `mcps802154_rx_timeout`.
+3. **Build dw3000.ko from exact kernel source** (commit ec45f20f38ea) with matching
+   vermagic/CRCs for hot-swap via rmmod+insmod (proven to work in this session).
+
 ## What Works Without a Partner
 
 | Feature                  | Status                                           |
