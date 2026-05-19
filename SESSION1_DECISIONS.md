@@ -122,3 +122,19 @@ Complete record of every decision, approach, finding, and change.
 - Whether CIR data contains usable signal
 - Whether the DW3000 can be used for ranging without the Qorvo HAL
 - The 6.1.167 kernel works with 6.1.145 vendor blobs
+
+### Phase 9: Binary kernel patch (BREAKTHROUGH)
+- **Decision:** Patch the running kernel binary instead of building from source
+- **Rationale:** Same kernel = guaranteed vendor compatibility, only 16 bytes changed
+- **Patch details:**
+  - `module_sig_check()` at offset 0x17ace0: MOV W0, WZR; RET
+  - `gki_is_module_protected_export()` at offset 0x17ae54: MOV W0, WZR; RET
+- **Result:** ALL 7 UWB modules loaded by init at boot
+
+### Phase 10: Accessing the DW3000
+- CIR config write WORKS
+- wpan0 interface exists and UP
+- nl802154 registered, phy0 detected, HAL communicating
+- Testmode not compiled in vendor build (ENOTSUP)
+- Tracing and kprobes available for data capture
+- Next: trigger UWB RX for CIR data
