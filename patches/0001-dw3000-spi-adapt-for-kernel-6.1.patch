@@ -1,0 +1,51 @@
+diff --git a/kernel/drivers/net/ieee802154/dw3000_spi.c b/kernel/drivers/net/ieee802154/dw3000_spi.c
+index 18372c7..df3d33b 100644
+--- a/kernel/drivers/net/ieee802154/dw3000_spi.c
++++ b/kernel/drivers/net/ieee802154/dw3000_spi.c
+@@ -101,10 +101,10 @@ static int dw3000_spi_probe(struct spi_device *spi)
+ 
+ 	dw->lna_pa_mode = (s8)dw3000_lna_pa_mode;
+ #if (KERNEL_VERSION(4, 13, 0) <= LINUX_VERSION_CODE)
+-#if (KERNEL_VERSION(5, 9, 0) <= LINUX_VERSION_CODE)
++#if 0  /* Fixed: last_cs_enable removed in 6.1 */
+ 	dw->spi_pid = spi->controller->kworker->task->pid;
+ #else
+-	dw->spi_pid = spi->controller->kworker.task->pid;
++	dw->spi_pid = spi->controller->kworker->task->pid;
+ #endif
+ #else
+ 	dw->spi_pid = spi->master->kworker.task->pid;
+@@ -128,7 +128,7 @@ static int dw3000_spi_probe(struct spi_device *spi)
+ #if (KERNEL_VERSION(5, 3, 0) <= LINUX_VERSION_CODE)
+ 	spi->rt = 1;
+ #endif
+-#if (KERNEL_VERSION(5, 9, 0) <= LINUX_VERSION_CODE)
++#if 0  /* Fixed: last_cs_enable removed in 6.1 */
+ 	/* Quirk to force spi_set_cs() in spi_setup() to do something!
+ 	   !!! Not doing this results in CS line stay LOW and SPIRDY IRQ
+ 	   isn't fired later when powering-on the device. Previous kernel
+@@ -235,13 +235,13 @@ err_alloc_hw:
+  *
+  * Return: always 0
+  */
+-static int dw3000_spi_remove(struct spi_device *spi)
++static void dw3000_spi_remove(struct spi_device *spi)
+ {
+ 	struct dw3000 *dw = spi_get_drvdata(spi);
+ 
+ 	if (dw == NULL)
+ 		/* Error during probe, all already freed */
+-		return 0;
++		return;
+ 
+ 	dev_dbg(dw->dev, "unloading...");
+ 
+@@ -259,7 +259,7 @@ static int dw3000_spi_remove(struct spi_device *spi)
+ 	dw3000_cir_data_alloc_count(dw, 0);
+ 	dw3000_mcps_free(dw);
+ 
+-	return 0;
++	return;
+ }
+ 
+ enum { DW3000,
