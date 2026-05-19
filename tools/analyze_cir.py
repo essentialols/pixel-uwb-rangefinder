@@ -18,11 +18,21 @@ Usage:
 """
 
 import sys
+import os
 import csv
 import json
 import math
 import argparse
 from collections import defaultdict
+
+# Add tools/ to path for cir_processing import
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import numpy as np
+    from cir_processing import CIRProcessor, allan_deviation, RANGE_PER_SAMPLE_ONEWAY
+    HAS_PROCESSING = True
+except ImportError:
+    HAS_PROCESSING = False
 
 
 def load_csv(path):
