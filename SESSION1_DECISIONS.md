@@ -138,3 +138,10 @@ Complete record of every decision, approach, finding, and change.
 - Testmode not compiled in vendor build (ENOTSUP)
 - Tracing and kprobes available for data capture
 - Next: trigger UWB RX for CIR data
+
+### Phase 11: DW3000 active, CIR capture blocked by short RX window
+- DW3000 chip ID: deca0314 (DW3000 E0 variant)
+- Full init captured via ftrace: channel 5, preamble_code 9
+- RX window only 646us during mcps_start (calibration, not ranging)
+- CIR requires actual frame reception with long RX window
+- Next: build PCTT PER_RX session via mcps802154 netlink (family ID 34)
