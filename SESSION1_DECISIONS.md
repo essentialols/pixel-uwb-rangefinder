@@ -93,6 +93,16 @@ Complete record of every decision, approach, finding, and change.
 | `pack_boot.py`         | Boot v4 image packer                    |
 | `patches/0001-*.patch` | DW3000 5.10->6.1 API patch              |
 
+### Phase 8: Boot image fix (post kernel build)
+
+- **Finding:** Original kernel in boot.img is LZ4 compressed (16.6 MB -> 35.5 MB)
+- **Finding:** Our pack_boot.py was packing uncompressed kernel (27.7 MB) -- wrong format!
+- **Finding:** AVB vbmeta block exists after kernel at offset 0xfce000 -- must be preserved
+- **Finding:** AVB footer at image end with "AVBf" magic -- must be preserved
+- **Fix:** LZ4-compress our kernel (27.7 MB -> 13.4 MB), preserve AVB at same offset
+- **Decision:** Also build v2 kernel with ieee802154+mac802154 as built-in (=y)
+- **Rationale:** Fewer modules to load means fewer failure points
+
 ## What's proven vs unproven
 
 ### Proven
