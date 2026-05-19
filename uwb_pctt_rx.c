@@ -353,29 +353,25 @@ int main(int argc, char *argv[]) {
         return rc != 0;
     }
 
-    /* Step 1: Skip SET_SCHEDULER (keep HAL's scheduler to avoid killing active sessions) */
-    printf("Step 1: (skipped, keeping existing scheduler)\n");
-    int rc = 0;
+    /* Step 1: Set scheduler to "on_demand" */
+    printf("Step 1: SET_SCHEDULER on_demand\n");
+    nla_init(attr_buf);
+    nla_put_u32(MCPS802154_ATTR_HW, 0);
+    nla_put_string(MCPS802154_ATTR_SCHEDULER_NAME, "on_demand");
+    int rc = send_cmd(MCPS802154_CMD_SET_SCHEDULER);
+    if (rc) { printf("Failed at step 1\n"); goto out; }
 
-    /* Step 2: Add pctt region alongside existing regions */
-    printf("Step 2: SET_SCHEDULER_REGIONS fira+pctt\n");
+    /* Step 2: Set regions to include "pctt" */
+    printf("Step 2: SET_SCHEDULER_REGIONS pctt\n");
     nla_init(attr_buf);
     nla_put_u32(MCPS802154_ATTR_HW, 0);
     nla_put_string(MCPS802154_ATTR_SCHEDULER_NAME, "on_demand");
     {
         int regions_nest = nla_nest_start(MCPS802154_ATTR_SCHEDULER_REGIONS);
-        {
-            int region_nest = nla_nest_start(1); /* fira region (preserve) */
-            nla_put_string(MCPS802154_REGION_ATTR_NAME, "fira");
-            nla_put_u32(MCPS802154_REGION_ATTR_ID, 0);
-            nla_nest_end(region_nest);
-        }
-        {
-            int region_nest = nla_nest_start(2); /* pctt region (add) */
-            nla_put_string(MCPS802154_REGION_ATTR_NAME, "pctt");
-            nla_put_u32(MCPS802154_REGION_ATTR_ID, 1);
-            nla_nest_end(region_nest);
-        }
+        int region_nest = nla_nest_start(1); /* first region */
+        nla_put_string(MCPS802154_REGION_ATTR_NAME, "pctt");
+        nla_put_u32(MCPS802154_REGION_ATTR_ID, 0);
+        nla_nest_end(region_nest);
         nla_nest_end(regions_nest);
     }
     rc = send_cmd(MCPS802154_CMD_SET_SCHEDULER_REGIONS);
@@ -390,7 +386,7 @@ int main(int argc, char *argv[]) {
         int call_nest = nla_nest_start(MCPS802154_ATTR_SCHEDULER_REGION_CALL);
         nla_put_string(MCPS802154_REGION_ATTR_NAME, "pctt");
         nla_put_u32(MCPS802154_REGION_ATTR_CALL, PCTT_CALL_SESSION_INIT);
-        nla_put_u32(MCPS802154_REGION_ATTR_ID, 1);
+        nla_put_u32(MCPS802154_REGION_ATTR_ID, 0);
         {
             int params_nest = nla_nest_start(MCPS802154_REGION_ATTR_CALL_PARAMS);
             nla_put_u32(PCTT_CALL_ATTR_SESSION_ID, 0);

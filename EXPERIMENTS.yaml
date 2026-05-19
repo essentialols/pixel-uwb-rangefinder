@@ -190,3 +190,22 @@ experiments:
       First attempt patched bl instruction at 0x1e74 but ELF relocation overwrote it at load time.
       Correct approach: patch the cbnz check, not the bl. Module installed in Magisk overlay at
       /data/adb/modules/uwb-pctt-patched/ as fallback. Relay consensus: RXPTO CIR hook is better path.
+
+  - id: E018
+    date: 2026-05-19
+    name: "NOP-patched PCTT module hot-swap and test"
+    purpose: "Verify NOP patch works by hot-swapping vendor PCTT module at runtime"
+    result: |
+      Successfully rmmod'd vendor module (setenforce 0 + stop HAL + refcount 0) and insmod'd
+      NOP-patched version. ALL 5 PCTT steps return ACK (error=0), confirming the NOP patch
+      bypasses the ENETDOWN check. However, chip remains at power=0 because SET_SCHEDULER
+      (step 1) kills the HAL's FiRa session, triggering deep sleep. The mcps802154_reschedule
+      path doesn't restart the chip: start_stop_request is false after scheduler replacement.
+      Attempted running PCTT while FiRa active (fira+pctt regions), but SET_SCHEDULER_REGIONS
+      replacing regions under active session caused kernel crash + reboot.
+    verdict: partial
+    notes: |
+      Key finding: rmmod works under specific conditions (setenforce 0, HAL stopped, refcount 0).
+      Magisk overlay does NOT work for kernel modules (loaded before overlays applied).
+      Next: binary-patch dw3000.ko ISR to read CIR accumulator on RXPTO instead of
+      trying to keep PCTT and FiRa coexisting.
