@@ -71,5 +71,13 @@ experiments:
     date: 2026-05-19
     name: "Testmode netlink probe"
     purpose: "Resolve nl802154 netlink family, enumerate ieee802154 PHY devices, test RX diagnostic commands. Fallback path if debugfs CIR is blocked."
-    result: "pending -- not yet run on device"
+    result: "nl802154 not registered (modules not loaded). Confirmed HAL uses nl802154 netlink."
+    verdict: partial
+
+  - id: E008
+    script: uwb_spi_raw.c
+    date: 2026-05-19
+    name: "Raw SPI register access"
+    purpose: "Direct SPI access to DW3000 via spidev, bypassing ieee802154/mcps/dw3000 driver stack. Read chip ID, scan registers, read CIR_RAM directly."
+    result: "pending -- requires custom kernel with SPI_SPIDEV=y (built, ready to flash)"
     verdict: pending

@@ -8,6 +8,7 @@ uwb_cir_read
 uwb_diag
 uwb_regdump
 uwb_testmode
+uwb_spi_raw
 uwb_range
 uwb_cir
 uwb_scan
