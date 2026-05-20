@@ -1,85 +1,73 @@
 # Next Session Guide
 
-## Current State (2026-05-19, session 3)
+## Current State (2026-05-20, session 4)
 
-Device is operational. `cmd uwb` shell provides full UWB control without custom tools.
-Diagnostic capture pipeline built and validated (52 reports in 15s test).
-CIR access blocked by MODULE_SIG_PROTECT (can't load patched module).
+**MODULE_SIG_PROTECT BYPASSED.** Patched kernel running on boot_a.
+Patched dw3000_cir_stream_v3.ko loads and produces CIR data.
+Full pipeline: cmd uwb session + debugfs CIR + cir_stream capture.
 
 ### What's Working
 
-- FiRa ranging via `cmd uwb start-fira-ranging-session` at 5Hz
-- Diagnostic notifications with RSSI (needs responder for real values)
-- Capture pipeline: `uwb_diag_capture.sh` + `parse_diag_logcat.py`
-- Device accessible via `ssh h1 "adb shell su -c '...'"`, root works
+- Kernel patch: `gki_is_module_unprotected_symbol` always returns true
+- `rmmod dw3000` and `insmod dw3000_cir_stream_v3.ko` both succeed
+- CIR: 1600-byte frames (256 bins x 6-byte I/Q + 48-byte header)
+- cir_stream: 3208 bytes captured in single window
+- FiRa ranging via `cmd uwb` at 5Hz
+- Diagnostic notifications with RSSI
+- debugfs needs manual mount: `mount -t debugfs none /sys/kernel/debug`
 
-### What's Not Working
+### Important: Module Swap After Reboot
 
-- CIR data (debugfs cir_data empty with vendor module)
-- Module hot-swap (MODULE_SIG_PROTECT blocks rmmod/insmod)
-- Radar session mode (not supported on this chip)
-- Direct register reads (vendor debugfs returns zeros)
-
-## Quick Start: Diagnostic Capture
+After each reboot, the vendor module is loaded by init. To use the patched module:
 
 ```bash
-cd ~/Documents/GitHub/pixel-uwb-rangefinder
-
-# 60-second capture
-./tools/uwb_diag_capture.sh 60
-
-# Parse results
-python3 tools/parse_diag_logcat.py data/diag_captures/<latest>/raw_logcat.txt
+ssh h1 "adb shell 'su -c \"
+mount -t debugfs none /sys/kernel/debug
+setprop ctl.stop vendor.uwb_hal
+sleep 2
+rmmod dw3000
+insmod /data/local/tmp/dw3000_cir_stream_v3.ko
+setprop ctl.start vendor.uwb_hal
+sleep 2
+cmd uwb enable-uwb
+\"'"
 ```
 
-## Quick Start: Manual FiRa Session
+### Recovery
+
+If boot fails: fastboot mode, then:
 
 ```bash
-# Enable UWB
-ssh h1 "adb shell su -c 'cmd uwb enable-uwb'"
-
-# Enable diagnostics
-ssh h1 "adb shell su -c 'cmd uwb enable-diagnostics-notification -r -a -c -s'"
-
-# Start session (blocking, shows reports in terminal)
-ssh h1 "adb shell su -c 'cmd uwb start-fira-ranging-session -b \
-    -i 100 -c 9 -t controller -r initiator \
-    -a 4660 -d 22136 -u ds-twr -l 200 -s 25 -R enabled'"
-
-# Stop
-ssh h1 "adb shell su -c 'cmd uwb stop-ranging-session 100'"
+ssh h1 "fastboot flash boot_a ~/boot_a_original_backup.img && fastboot reboot"
 ```
 
-## Highest-Value Next Steps
+## Quick Start: CIR Capture
 
-### 1. Get a second UWB device (BEST ROI)
+```bash
+# 1. Swap module (after reboot)
+# [run the module swap commands above]
 
-Any UWB phone as a responder would unlock:
+# 2. Configure CIR
+ssh h1 "adb shell 'su -c \"
+echo \\\"count 256 filter 0x0 offset 0\\\" > /sys/kernel/debug/dw3000/cir_config
+cmd uwb enable-diagnostics-notification -r -a -c -s
+cmd uwb start-fira-ranging-session -i 100 -c 9 -t controller -r initiator -a 4660 -d 22136 -u ds-twr -l 200 -s 25 -R enabled &
+sleep 3
+\"'"
 
-- Real RSSI values for presence detection
-- Actual distance/AoA measurements
-- Populated diagnostic data (chip only fills on successful RX)
-- No kernel modification needed
+# 3. Stream CIR data
+ssh h1 "adb shell 'su -c \"timeout 10 /data/local/tmp/cir_stream\"'" > data/cir_captures/latest.bin
 
-### 2. Flash custom kernel (unlocks CIR)
+# 4. Decode
+python3 tools/cir_stream_decode.py data/cir_captures/latest.bin
 
-Build GKI kernel with MODULE_SIG_PROTECT=n, flash it.
-Then load our patched dw3000.ko for full CIR pipeline.
+# 5. Stop session
+ssh h1 "adb shell 'su -c \"cmd uwb stop-all-ranging-sessions\"'"
+```
 
-### 3. Explore vendor UCI extensions
+## Next Steps
 
-The logcat shows "Failed to parse received message: Unknown" after
-diagnostic packets. These may contain vendor-specific CIR data.
-Capture raw HAL traffic to investigate.
-
-## Files Reference
-
-| File                          | Purpose                                               |
-| ----------------------------- | ----------------------------------------------------- |
-| tools/uwb_diag_capture.sh     | End-to-end diagnostic capture (host-side)             |
-| tools/parse_diag_logcat.py    | Parse logcat into ranging/diagnostic CSVs             |
-| tools/cir_stream.c            | Continuous CIR capture (needs patched module)         |
-| tools/cir_stream_decode.py    | Decode binary CIR stream                              |
-| tools/pctt_inject (on device) | Netlink testmode command sender                       |
-| FRONTIER.md                   | Full analysis of what works, dead ends, paths forward |
-| EXPERIMENTS.yaml              | All experiments documented                            |
+1. **Automate module swap**: Create Magisk service.sh to auto-swap after boot
+2. **Long CIR captures**: Run 60+ second captures for environmental analysis
+3. **Analyze noise-floor CIR**: Compare with/without objects near antenna
+4. **Second UWB device**: Would unlock real signal CIR with ranging data
