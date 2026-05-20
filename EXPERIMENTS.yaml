@@ -376,6 +376,14 @@ experiments:
       not a register address write.
       Also prepared: dw3000_explore_regs.sh, dw3000_binary_search.sh.
 
+      CRITICAL SUBTLETY: testmode START_RX_DIAG calls rx_enable with
+      timeout_pac=0 (infinite RX, no RXPTO). Our trampoline (patches 1-2)
+      only fires on RXPTO, so it would NEVER execute in testmode RX.
+      CIR data would only flow if ambient UWB triggers rxfcg_event.
+      Fix: read CIR accumulator directly via debugfs during continuous RX,
+      or patch testmode to use timeout_pac>0 for periodic RXPTO events.
+      Pipeline for source rebuild: tools/build_testmode.sh.
+
   - id: E025
     script: tools/dw3000_regwrite.sh
     date: 2026-05-19
