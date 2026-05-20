@@ -1,73 +1,80 @@
 # Next Session Guide
 
-## Current State (2026-05-20, session 4)
+## Current State (2026-05-20, session 5)
 
-**MODULE_SIG_PROTECT BYPASSED.** Patched kernel running on boot_a.
-Patched dw3000_cir_stream_v3.ko loads and produces CIR data.
-Full pipeline: cmd uwb session + debugfs CIR + cir_stream capture.
+**Stable trampoline during active ranging.** v7a module (trampoline_only with
+acc_clken only) survives 12+ seconds of FiRa ranging without crash. CIR data
+extraction blocked by spinlock/SPI sleep incompatibility and vendor integrity check.
 
 ### What's Working
 
-- Kernel patch: `gki_is_module_unprotected_symbol` always returns true
-- `rmmod dw3000` and `insmod dw3000_cir_stream_v3.ko` both succeed
-- CIR: 1600-byte frames (256 bins x 6-byte I/Q + 48-byte header)
-- cir_stream: 3208 bytes captured in single window
+- Kernel patch: `gki_is_module_unprotected_symbol` always returns true (boot_a)
+- Module swap: `rmmod dw3000` + `insmod` works after HAL kill
+- v7a trampoline: stable during active ranging (no cir_config written)
+- cir_config write: works with trampoline_only layout (0xf9402288 at 0x215c0)
 - FiRa ranging via `cmd uwb` at 5Hz
-- Diagnostic notifications with RSSI
-- debugfs needs manual mount: `mount -t debugfs none /sys/kernel/debug`
+- Diagnostic notifications with RSSI via logcat
 
-### Important: Module Swap After Reboot
+### What's Blocked
 
-After each reboot, the vendor module is loaded by init. To use the patched module:
+- CIR data read: all SPI functions sleep (mutex_lock, spi_sync), can't call
+  from spinlock-held RXPTO context
+- With cir_config written: acc_clken crashes (mutex contention during ranging)
+- Vendor integrity check: only ONE specific trampoline layout passes; any
+  other RXPTO handler modifications cause cir_config to spin at 100% CPU
+
+### Module Swap After Reboot
 
 ```bash
 ssh h1 "adb shell 'su -c \"
-mount -t debugfs none /sys/kernel/debug
 setprop ctl.stop vendor.uwb_hal
-sleep 2
+sleep 1
+kill -9 \$(pidof android.hardware.qorvo.uwb.service)
+sleep 1
+rmmod dw3000_core_tests
 rmmod dw3000
-insmod /data/local/tmp/dw3000_cir_stream_v3.ko
+insmod /data/local/tmp/dw3000_cir_v7a.ko
+mount -t debugfs debugfs /sys/kernel/debug
 setprop ctl.start vendor.uwb_hal
 sleep 2
-cmd uwb enable-uwb
 \"'"
 ```
 
 ### Recovery
 
-If boot fails: fastboot mode, then:
-
 ```bash
 ssh h1 "fastboot flash boot_a ~/boot_a_original_backup.img && fastboot reboot"
 ```
 
-## Quick Start: CIR Capture
+### Modules on Device (/data/local/tmp/)
 
-```bash
-# 1. Swap module (after reboot)
-# [run the module swap commands above]
+| File                    | Description                      | Status                 |
+| ----------------------- | -------------------------------- | ---------------------- |
+| dw3000_vendor.ko        | Unpatched vendor module          | Reference              |
+| dw3000_cir_v7a.ko       | trampoline_only + acc_clken only | STABLE (no cir_config) |
+| dw3000_cir_v8c.ko       | spinlock removal attempt         | Fails integrity check  |
+| dw3000_tramp_only.ko    | Full trampoline, dw+64 check     | cir_config works       |
+| dw3000_cir_stream_v3.ko | Session 3/4 patched module       | Legacy, zero I/Q       |
 
-# 2. Configure CIR
-ssh h1 "adb shell 'su -c \"
-echo \\\"count 256 filter 0x0 offset 0\\\" > /sys/kernel/debug/dw3000/cir_config
-cmd uwb enable-diagnostics-notification -r -a -c -s
-cmd uwb start-fira-ranging-session -i 100 -c 9 -t controller -r initiator -a 4660 -d 22136 -u ds-twr -l 200 -s 25 -R enabled &
-sleep 3
-\"'"
+## Highest-Value Paths Forward
 
-# 3. Stream CIR data
-ssh h1 "adb shell 'su -c \"timeout 10 /data/local/tmp/cir_stream\"'" > data/cir_captures/latest.bin
+### 1. Second UWB Device (ZERO RISK, INSTANT RESULTS)
 
-# 4. Decode
-python3 tools/cir_stream_decode.py data/cir_captures/latest.bin
+With a responder, UCI diagnostics provide CIR/RSSI/AoA through the standard
+Android stack. No kernel modification needed. Any UWB phone works (iPhone 11+,
+Samsung S21+ UWB, Pixel 6/7/8/9 Pro).
 
-# 5. Stop session
-ssh h1 "adb shell 'su -c \"cmd uwb stop-all-ranging-sessions\"'"
-```
+### 2. Find Exact LineageOS Kernel Source
 
-## Next Steps
+Need source matching `6.1.145-android14-11-gec45f20f38ea-ab15260282`.
+Would allow building a module with correct ABI, bypassing all binary patching.
+Check LineageOS build manifests for the exact kernel commit.
 
-1. **Automate module swap**: Create Magisk service.sh to auto-swap after boot
-2. **Long CIR captures**: Run 60+ second captures for environmental analysis
-3. **Analyze noise-floor CIR**: Compare with/without objects near antenna
-4. **Second UWB device**: Would unlock real signal CIR with ranging data
+### 3. Exploit Trampoline Timing
+
+The trampoline_only layout passes the integrity check and acc_clken works when
+mutex is uncontested. Potential approach:
+
+- Trampoline enables acc clock (fast mutex trylock succeeds)
+- Userspace poller reads CIR data immediately after RXPTO via debugfs
+- Requires tight timing coordination

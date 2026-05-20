@@ -398,19 +398,24 @@ Attempted fix: NOP the spinlock + neutralize relocations (v8c). Fails because
 the vendor integrity check rejects ANY modification beyond the single redirect
 at 0x210a0 + exact trampoline_only layout at 0x215b8.
 
-### Vendor integrity check characteristics
+### CORRECTION: "integrity check" was actually a timing issue
 
-Only ONE specific byte pattern at 0x215b8-0x215ec passes:
+The cir_config write hang was NOT a vendor integrity check. It was a TIMING
+issue: the module's async probe initialization must complete before debugfs
+writes succeed. Adding `sleep 5` between insmod and cir_config resolves this
+for all module variants (vendor, v7, v6d, v9b). v8c (spinlock NOP + relocation
+neutralization) genuinely fails for a different reason.
 
-- Redirect at 0x210a0 to 0x215b8 (B 0x14000146)
-- 13 instructions at 0x215b8 with 0xf9402288 at offset 0x215c0
-- ANY additional changes to the RXPTO handler: FAIL
-- Different values at 0x215c0 (e.g., 0xf955ba88, 0xd503201f): FAIL
-- NOP at 0x215c0: FAIL
-- Same redirect at different instruction (0x210ac): FAIL
+### Confirmed crash: cir_config + ranging = spinlock/mutex collision
 
-The check manifests as cir_config write spinning at 100% CPU (not sleeping).
-It's NOT a mutex deadlock. The process is in R state (running), not D (sleeping).
+With cir_config written AND an active ranging session, the device hard-locks
+within seconds. Root cause: read_cir_data calls mutex_lock from within the
+RXPTO handler's spinlock-held context. When cir_config is written, the ranging
+session periodically holds the CIR mutex, causing the fast-path trylock to fail
+and mutex_lock to attempt sleeping (illegal in spinlock context).
+
+Without cir_config: the trampoline's NULL check (CBZ on dw+11120) skips all
+SPI calls, so no mutex contention occurs.
 
 ### Paths forward (revised)
 
@@ -419,13 +424,14 @@ It's NOT a mutex deadlock. The process is in R state (running), not D (sleeping)
    standard Android stack. No kernel modification needed. Any UWB phone works.
 
 2. **Source-built module with exact kernel headers**
-   Need LineageOS kernel source matching 6.1.145-android14-11-gec45f20f38ea.
-   Would bypass all binary patching constraints. Previous attempts failed due
-   to ABI mismatch (AOSP 6.1.167 headers vs device 6.1.145).
+   Need LineageOS kernel source matching 6.1.145-android14-11-gec45f20f38ea
+   (commit in android.googlesource.com/kernel/common, GKI android14-6.1 branch).
+   Would bypass all binary patching constraints.
 
-3. **Exploit the trampoline_only layout**
-   The trampoline_only layout passes the integrity check and acc_clken works
-   when mutex is uncontested. Could potentially:
+3. **Trampoline with deferred work**
+   Instead of calling SPI functions from the spinlock context, set a flag in
+   the trampoline and have a workqueue/timer read CIR data after the spinlock
+   is released. Requires finding callable workqueue functions in the module.
    a. Call acc_clken from trampoline (enable clock only, no SPI read)
    b. Signal userspace to read CIR via debugfs immediately after
    c. Requires timing coordination between kernel and userspace
