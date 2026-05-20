@@ -29,7 +29,8 @@
 # --- Configuration ---
 N_FRAMES=${1:-500}          # total frames to capture (0 = infinite)
 FIRA_INTERVAL=${2:-200}     # FiRa ranging interval in ms
-CW_MODE=${3:-0}             # 1 = enable CW tone before capture
+CW_MODE=${3:-0}             # 1 = enable CW tone (diagnostic only, won't produce CIR peaks)
+CIR_BINS=${4:-256}          # CIR bins per frame (default 20, max ~1016)
 OUT=/data/local/tmp/uwb_capture
 DEVICE_DIR=/data/local/tmp
 SESSION_ID=$((RANDOM % 9000 + 1000))
@@ -45,7 +46,7 @@ status() {
     echo "$(date '+%H:%M:%S') $1" > "$OUT/status.txt"
 }
 
-status "STARTING: $N_FRAMES frames, interval=${FIRA_INTERVAL}ms, cw=$CW_MODE"
+status "STARTING: $N_FRAMES frames, interval=${FIRA_INTERVAL}ms, cw=$CW_MODE, bins=$CIR_BINS"
 
 # --- Step 1: Module hot-swap ---
 status "HOTSWAP: setting permissive"
@@ -94,12 +95,39 @@ if [ "$CW_MODE" = "1" ]; then
     sleep 1
 fi
 
-# --- Step 4: Expand CIR if possible ---
-status "CIR: expanding capture size"
+# --- Step 4: Expand CIR capture ---
+status "CIR: expanding to $CIR_BINS bins"
 CHIP_DIR=$(ls -d /sys/kernel/debug/dw3000/spi* 2>/dev/null | head -1)
 if [ -n "$CHIP_DIR" ] && [ -f "$CHIP_DIR/cir_config" ]; then
-    echo "count 128 filter 0x0 offset 0" > "$CHIP_DIR/cir_config" 2>/dev/null
-    echo "cir_config: $(cat $CHIP_DIR/cir_config 2>/dev/null)"
+    echo "  cir_config before: $(cat $CHIP_DIR/cir_config 2>/dev/null)"
+    echo "count $CIR_BINS filter 0x0 offset 0" > "$CHIP_DIR/cir_config" 2>/dev/null
+    echo "  cir_config after:  $(cat $CHIP_DIR/cir_config 2>/dev/null)"
+fi
+
+# --- Step 4b: Test register write capability ---
+status "REGWRITE: testing"
+if [ -f "$CHIP_DIR/0x0" ]; then
+    DEV_ID=$(cat "$CHIP_DIR/0x0" 2>/dev/null)
+    echo "  DEV_ID: $DEV_ID"
+
+    # Try reading TX_TEST
+    TX_TEST=$(cat "$CHIP_DIR/0x70028" 2>/dev/null)
+    echo "  TX_TEST: $TX_TEST"
+
+    # Try reading ACK_RESP_T
+    ACK_RESP=$(cat "$CHIP_DIR/0x36" 2>/dev/null)
+    echo "  ACK_RESP_T: $ACK_RESP"
+
+    # Try writing to a register (write same value back to SYS_CFG as safe test)
+    SYS_CFG=$(cat "$CHIP_DIR/0x10" 2>/dev/null)
+    echo "  SYS_CFG: $SYS_CFG"
+    echo "$SYS_CFG" > "$CHIP_DIR/0x10" 2>/dev/null
+    WRITE_RESULT=$?
+    if [ $WRITE_RESULT -eq 0 ]; then
+        echo "  REGISTER WRITE: SUCCESS (wrote SYS_CFG back)"
+    else
+        echo "  REGISTER WRITE: FAILED (errno=$WRITE_RESULT)"
+    fi
 fi
 
 # --- Step 5: Start FiRa session ---
@@ -136,6 +164,8 @@ fira_interval: $FIRA_INTERVAL
 cw_mode: $CW_MODE
 session_id: $SESSION_ID
 capture_bytes: $CAPTURE_SIZE
+cir_bins: $CIR_BINS
+cw_mode: $CW_MODE
 kernel: $(uname -r)
 METADATA
 

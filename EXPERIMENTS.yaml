@@ -397,10 +397,23 @@ experiments:
         SYS_CFG (0x10): system configuration (WP)
         CLK_CTRL (0x110004): clock enables
 
-      Also: cir_config virtual register accepts "count N filter 0xX offset Y"
-      to configure CIR capture size (up to 1016 samples).
+      CW tone physics note: CW tone is a single-frequency sinusoid, which
+      is approximately orthogonal to the PN preamble code. Correlator output
+      with CW input is proportional to the code's DC imbalance (typically
+      5-15% of code energy). CW tone is useful as a DIAGNOSTIC (confirms
+      register writes and RX path), but won't produce sharp CIR peaks.
+      Also: CW is OFF during RX window (half-duplex), so antenna coupling
+      only matters for residual ringing.
+
+      cir_config (CONFIRMED from AOSP, highest value):
+      Virtual register accepts "count N filter 0xX offset Y".
+      No maximum count enforced (validates count >= 1).
+      DW3000 accumulator has 1016 taps. Can expand from default 20 to 1016.
+      cir_config has PERM flag (accessible anytime, even chip off).
 
       Tools prepared:
         dw3000_regwrite.sh: test-write, cw-on, cw-off, read, write, cir-expand
         dw3000_explore_regs.sh: full register survey
         dw3000_binary_search.sh: binary symbol analysis
+        uwb_autonomous.sh: unattended capture with CIR expansion
+        analyze_capture.sh: one-command post-capture analysis pipeline
