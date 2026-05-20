@@ -358,16 +358,23 @@ experiments:
     date: 2026-05-19
     name: "MCPS802154 testmode via netlink command 12"
     purpose: "Try testmode commands (RX_DIAG, CW_TONE, CONTINUOUS_TX) via mcps802154 CMD_TESTMODE instead of PCTT region"
-    result: "pending -- requires on-device testing"
-    verdict: pending
+    result: |
+      AOSP Kbuild analysis: dw3000_testmode.o is conditionally compiled
+      (dw3000-$(CONFIG_MCPS802154_TESTMODE) += dw3000_testmode.o).
+      CONFIG_MCPS802154_TESTMODE is disabled in vendor build, so the
+      testmode handler dw3000_tm_cmd is NOT linked into the vendor
+      dw3000.ko. CMD_TESTMODE will return EOPNOTSUPP.
+
+      NOTE: the .c file itself has no #ifdef guards (compiles cleanly),
+      so rebuilding with CONFIG_MCPS802154_TESTMODE=y would enable it.
+    verdict: dead_end
     notes: |
-      Key difference from E007 (nl802154 testmode): this uses mcps802154
-      netlink family (id 34), cmd MCPS802154_CMD_TESTMODE (12), with
-      DW3000_TM_ATTR_CMD nested in ATTR_TESTDATA. May work even if
-      CONFIG_MCPS802154_TESTMODE is disabled, because the handler might
-      be in the dw3000 driver itself (not mcps802154 core).
-      Also prepared: dw3000_explore_regs.sh (register read exploration),
-      dw3000_binary_search.sh (binary analysis for loopback symbols).
+      Verified via AOSP: dw3000_testmode.c is unconditionally compilable
+      but conditionally linked. Fast commands (DW3000_CMD_RX=0x2) cannot
+      be issued through debugfs register writes (different SPI format).
+      The dw3000_write_fastcmd function uses a special SPI transaction,
+      not a register address write.
+      Also prepared: dw3000_explore_regs.sh, dw3000_binary_search.sh.
 
   - id: E025
     script: tools/dw3000_regwrite.sh
