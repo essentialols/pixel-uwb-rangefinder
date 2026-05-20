@@ -257,3 +257,31 @@ experiments:
       Verification blocked by Android security restrictions (kptr_restrict,
       ftrace permissions). Need either: (a) source-built module for proper
       debugging, or (b) root shell with full CAP_SYS_ADMIN for ftrace access.
+
+  - id: E021
+    date: 2026-05-19
+    name: "BREAKTHROUGH: CIR noise floor captured without second device"
+    purpose: "Add debugfs state check bypass (patch 4) to allow CIR read during deep sleep"
+    result: |
+      Added 4th binary patch: bypass debugfs operational state check in
+      dw3000_dbgfs_reg_op (b.hi -> b at 0x17ec8). This was the final blocker:
+      the debugfs wrapper returned -EIO before reaching the cir_data handler
+      because current_operational_state < DW3000_OP_STATE_IDLE_RC during deep
+      sleep between FiRa ranging slots.
+
+      With all 4 patches, cir_reader successfully captures 176 bytes of CIR I/Q
+      data on every RXPTO during a FiRa session. 5 consecutive captures confirmed
+      with incrementing timestamps. Data shows noise floor: 20 I/Q samples with
+      magnitudes 0.1-0.56, random phases (no coherent signal), peak/mean ratio 1.7x.
+
+      The complete 4-patch recipe:
+      (1) RXPTO handler B redirect to trampoline at dw3000_spitests (0x10678)
+      (2) 8-instruction trampoline: cmp/b.cs + mov args + bl read_frame_cir_data
+          + b back (0x11308)
+      (3) CIA flag check bypass: tbnz -> b in read_frame_cir_data (0xda98)
+      (4) debugfs state check bypass: b.hi -> b in reg_op (0x17ec8)
+    verdict: success
+    notes: |
+      All 4 patches are to vendor dw3000.ko at file offsets relative to .text
+      section start (0x109fc). Hot-swap via: setenforce 0, stop HAL, rmmod chain
+      (pctt, nfcc, fira, dw3000), insmod patched, insmod regions, start HAL.
