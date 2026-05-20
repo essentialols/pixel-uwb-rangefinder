@@ -121,10 +121,32 @@ The exact boundary of what we've achieved:
 - Source-built modules crash (ABI mismatch between 6.1.167 build and 6.1.145 device)
 - Binary patches exist but the RXPTO+CIA combination crashes
 
-**The single remaining step:** a clean vendor binary patch that NOPs the CIA check
-(0x253b8) AND adds a BL to read_frame_cir_data from the RXPTO handler,
-without using the broken 52-byte patches. This requires finding the exact
-call sequence in the vendor binary (scout agent analyzing this now).
+**New patch created and tested (session 4b):**
+
+- RXPTO handler at file offset 0x20ff4-0x210bc (204 bytes)
+- read_frame_cir_data at file offset 0x25388 (268 bytes)
+- 4-part patch: CIA NOP + x0=dw + x1=stack_info + BL read_frame_cir_data
+- v2 (NULL info): kernel panic (null deref on info->flags)
+- v3 (SP as info): no crash but mutex deadlock
+
+**Mutex deadlock:** The CIR data flow has a structural deadlock:
+
+1. Debugfs reader holds `cir->mutex` and waits on `cir->complete`
+2. RXPTO handler (our patch) calls `read_frame_cir_data` which tries
+   `mutex_lock_interruptible(&cir->mutex)` and BLOCKS
+3. Neither can proceed: classic producer-consumer deadlock
+
+**The real fix** requires calling the LOW-LEVEL functions directly from the
+RXPTO handler, bypassing the mutex/completion mechanism:
+
+1. `dw3000_acc_clken(dw, true)` (enable accumulator clock)
+2. `dw3000_read_cir_data(dw, stsMode, prf)` (SPI read of accumulator)
+3. `dw3000_acc_clken(dw, false)` (disable clock)
+4. `dw3000_complete_cir_data(dw)` (signal completion WITHOUT mutex)
+
+This needs ~8 instructions: too many to fit in the 3-instruction patch slot.
+Requires finding dead code space in the module for a trampoline, or
+replacing the entire RXPTO epilogue.
 
 **Hardware constraint confirmed:** DW3000 accumulator is only populated during
 active RX (while antenna is listening). After RXPTO fires, the chip transitions
