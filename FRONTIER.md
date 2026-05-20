@@ -301,19 +301,87 @@ due to kernel version ABI mismatch. The fix needs a NEW binary patch that:
 3. The new RXPTO patch must be a minimal trampoline: save regs, call
    read_frame_cir_data, restore regs, return to original RXPTO flow
 
-## Session 4 final state (2026-05-20 03:00)
+## Session 5 progress (2026-05-20)
 
-**v5b trampoline crashes during active sessions.** acc_clken or read_cir_data
-have preconditions unmet in RXPTO interrupt context. Hard lockup, no pstore trace.
+### v5b/v5c crash root cause: TWO bugs found
 
-**What works reliably:**
-- v2 kernel (MODULE_SIG_PROTECT bypass) boots and persists
-- Module swap (atomic: disable-uwb + stop-hal + kill + rmmod + insmod)
-- v5b module loads, probes SPI, doesn't crash at idle
-- Crashes ONLY when RXPTO fires during active session
+**Bug 1: Spinlock deadlock.** The trampoline at 0x215b8 redirected from 0x210a0
+(inside a `_raw_spin_lock_irqsave` section) and jumped to 0x210ac (epilogue),
+SKIPPING `_raw_spin_unlock_irqrestore` at 0x210a8. The permanently-held spinlock
+caused hard lockup on next access. Full RXPTO handler flow:
 
-**Next session priorities:**
-1. **Second UWB device** (instant results, zero patches needed)
-2. Debug acc_clken crash (try calling ONLY acc_clken without read_cir_data)
-3. Direct SPI register write to accumulator clock instead of calling acc_clken
-4. Find exact LineageOS kernel source for matching ABI module build
+```
+0x21090: BL _raw_spin_lock_irqsave   # LOCK
+0x21094: LDRB w8, [x21]              # read flag
+0x21098: MOV x1, x0                  # save IRQ flags
+0x2109c: CBZ w8, 0x210c0             # if flag==0, error path
+0x210a0: STRB wzr, [x21]             # clear flag  <-- REDIRECT POINT
+0x210a4: MOV x0, x19                 # lock ptr
+0x210a8: BL _raw_spin_unlock_irqrestore  # UNLOCK (SKIPPED by v5b!)
+0x210ac: LDP... (epilogue)           <-- v5b jumped here, lock still held
+```
+
+**Bug 2: Wrong register for dw struct.** The RXPTO handler computes:
+
+- `x20 = x0` (dw struct base, saved at 0x2100c)
+- `x19 = x0 + 0x2B08` (rx sub-struct for spinlock, computed at 0x21010)
+
+All v5 patches used x19 for dw struct access. This passed a pointer 0x2B08 bytes
+INTO the struct to acc_clken and read_cir_data, causing memory corruption.
+Correct register is x20.
+
+### v6b: first stable trampoline with active ranging
+
+Fixed both bugs. Trampoline saves IRQ flags (x1), does CIR work with x20
+(correct dw base), restores flags, executes displaced STRB, then branches to
+0x210a4 for proper spin_unlock + epilogue. **Survived 12+ seconds of 5Hz
+FiRa ranging without crash.**
+
+### v6c: debugfs non-blocking read
+
+Added NOP of `wait_for_completion_interruptible` in `dw3000_dbgfs_cir_data`
+(0x292a0) so CIR data reads return immediately instead of blocking on
+completion signal. The trampoline doesn't call `complete()` (relocated kernel
+symbol, can't be called from patched code).
+
+### Critical discovery: CIA NOP was in wrong function
+
+The TBZ at 0x253b8 (previously thought to be in dw3000_read_frame_cir_data)
+is actually in **rx_get_measurement** (file 0x25388, 292 bytes). The actual
+dw3000_read_frame_cir_data is at file 0x1e40c (1176 bytes) and has NO CIA
+flag check. Our trampoline calls dw3000_read_cir_data directly, bypassing
+read_frame_cir_data, so the CIA NOP was never needed.
+
+### Mysterious cir_config sensitivity to dead code bytes
+
+Changing 4 bytes at 0x215c0 (dead code in dw3000_testmode_continuous_tx_start)
+from the original 0xa9017bfd to specific values breaks cir_config write:
+
+| Value at 0x215c0 | Encoding              | cir_config |
+| ---------------- | --------------------- | ---------- |
+| 0xa9017bfd       | STP (original)        | works      |
+| 0xf9402288       | LDR x8, [x20, #64]    | works      |
+| 0xf9402289       | LDR x9, [x20, #64]    | works      |
+| 0xf955ba88       | LDR x8, [x20, #11120] | HANGS      |
+| 0xd503201f       | NOP                   | HANGS      |
+
+Root cause unknown. Possibly vendor module integrity check.
+
+### cir_config allocation makes acc_clken crash
+
+With cir_config written, acc_clken crashes during active ranging (hard-lock).
+Without cir_config, acc_clken survives 12+ seconds. cir_config allocates a
+struct at dw+11120 which may modify state read by acc_clken.
+
+### Session 5 stable configuration
+
+- v7a module: trampoline_only with read_cir_data NOPed (acc_clken only)
+- No cir_config written
+- Ranging sessions run stably with RXPTO trampoline active
+
+### Next steps
+
+1. Read CIR accumulator directly via SPI from trampoline (bypass read_cir_data)
+2. Find dw3000_reg_read function addresses for direct SPI access
+3. Or: determine what dw+11120 allocation changes that breaks acc_clken
+4. Second UWB device still highest-value path for real CIR data
