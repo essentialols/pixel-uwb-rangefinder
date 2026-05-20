@@ -379,9 +379,53 @@ struct at dw+11120 which may modify state read by acc_clken.
 - No cir_config written
 - Ranging sessions run stably with RXPTO trampoline active
 
-### Next steps
+### Hard wall: spinlock + sleeping SPI = incompatible
 
-1. Read CIR accumulator directly via SPI from trampoline (bypass read_cir_data)
-2. Find dw3000_reg_read function addresses for direct SPI access
-3. Or: determine what dw+11120 allocation changes that breaks acc_clken
-4. Second UWB device still highest-value path for real CIR data
+The RXPTO handler's second spinlock section (0x21090-0x210a8) holds a spinlock
+with IRQs disabled. ALL SPI functions sleep (acc_clken uses mutex_lock,
+read_cir_data uses mutex_lock x2, spi_sync calls kernel spi_sync which sleeps).
+Calling any sleeping function from spinlock context is illegal (scheduling while
+atomic).
+
+Without cir_config: mutex is always free, mutex_lock's fast path succeeds
+without sleeping (trylock). This explains why v7a survived.
+
+With cir_config: the ranging session periodically holds the mutex for CIR
+operations. RXPTO fires during this window, trampoline calls acc_clken,
+mutex_lock sleeps, crash.
+
+Attempted fix: NOP the spinlock + neutralize relocations (v8c). Fails because
+the vendor integrity check rejects ANY modification beyond the single redirect
+at 0x210a0 + exact trampoline_only layout at 0x215b8.
+
+### Vendor integrity check characteristics
+
+Only ONE specific byte pattern at 0x215b8-0x215ec passes:
+
+- Redirect at 0x210a0 to 0x215b8 (B 0x14000146)
+- 13 instructions at 0x215b8 with 0xf9402288 at offset 0x215c0
+- ANY additional changes to the RXPTO handler: FAIL
+- Different values at 0x215c0 (e.g., 0xf955ba88, 0xd503201f): FAIL
+- NOP at 0x215c0: FAIL
+- Same redirect at different instruction (0x210ac): FAIL
+
+The check manifests as cir_config write spinning at 100% CPU (not sleeping).
+It's NOT a mutex deadlock. The process is in R state (running), not D (sleeping).
+
+### Paths forward (revised)
+
+1. **Second UWB device (HIGHEST VALUE, ZERO RISK)**
+   With a responder, UCI diagnostics provide CIR, RSSI, AoA through the
+   standard Android stack. No kernel modification needed. Any UWB phone works.
+
+2. **Source-built module with exact kernel headers**
+   Need LineageOS kernel source matching 6.1.145-android14-11-gec45f20f38ea.
+   Would bypass all binary patching constraints. Previous attempts failed due
+   to ABI mismatch (AOSP 6.1.167 headers vs device 6.1.145).
+
+3. **Exploit the trampoline_only layout**
+   The trampoline_only layout passes the integrity check and acc_clken works
+   when mutex is uncontested. Could potentially:
+   a. Call acc_clken from trampoline (enable clock only, no SPI read)
+   b. Signal userspace to read CIR via debugfs immediately after
+   c. Requires timing coordination between kernel and userspace
