@@ -1,119 +1,152 @@
 # Frontier Analysis -- What's Real, What's Not, What's Next
 
-**Date:** 2026-05-19, session 1 (on-device results + module build)
+**Updated:** 2026-05-19, session 3 (cmd uwb discovery + diagnostic capture pipeline)
 
-## Major achievement: all modules built from source
+## Major discoveries this session
+
+### 1. `cmd uwb` shell interface (NEW)
+
+The Android UWB shell (`adb shell cmd uwb`) provides full control:
+
+- `enable-uwb` / `disable-uwb` -- toggle UWB subsystem
+- `start-fira-ranging-session` -- start FiRa ranging with full parameter control
+- `enable-diagnostics-notification -r -a -c -s` -- enable RSSI, AoA, CIR, segment metrics
+- `start-radar-session` -- radar mode (status_code=4, not supported on this chip)
+- `get-specification-info` -- chip capabilities (diagnostics=true, rssi_reporting=true)
+
+This bypasses the need for custom netlink tools (`pctt_inject`, `uwb_testmode`).
+FiRa sessions start reliably at 5Hz with diagnostics enabled (`flags=39`).
+
+### 2. Diagnostic notification flow confirmed
+
+UCI diagnostic packets flow through the full stack:
+
+```
+DW3000 chip -> kernel driver -> UCI netlink -> Qorvo HAL -> Android UWB Service -> logcat
+```
+
+Each ranging round produces:
+
+- 3 FrameReports (control, STS, data) with antenna_set=4
+- RSSI in data frame (0 without responder, real values with one)
+- CIR arrays present but empty (vendor module doesn't populate them)
+- raw_ntf_data with 56-byte UCI notification payload
+
+### 3. Vendor module testmode confirmed compiled in
+
+Binary analysis of vendor dw3000.ko proved `dw3000_tm_cmd` is a global symbol.
+`pctt_inject` testmode START_RX_DIAG returns error=0 (success). But:
+
+- Getting results returns error=95 (Not supported)
+- Chip doesn't stay powered after testmode command
+- No CIR data through testmode path with vendor module
+
+### 4. All modules built from source (session 1)
 
 Successfully cross-compiled the entire UWB module chain from AOSP source
-against the running LineageOS 6.1 kernel on H1 (16-core, aarch64 cross-compiler):
+against the running LineageOS 6.1 kernel on H1:
 
 ```
-ieee802154.ko     -- from kernel/common (android14-6.1)
-mac802154.ko      -- from kernel/common (android14-6.1)
-mcps802154.ko     -- from AOSP google-modules/uwb/qorvo/dw3000 (pantah branch)
-mcps802154_region_fira.ko
-mcps802154_region_nfcc_coex.ko
-mcps802154_region_pctt.ko
-dw3000.ko         -- with 3 patches for 5.10->6.1 API changes
+ieee802154.ko, mac802154.ko, mcps802154.ko,
+mcps802154_region_fira.ko, mcps802154_region_nfcc_coex.ko,
+mcps802154_region_pctt.ko, dw3000.ko (3 patches for 5.10->6.1)
 ```
 
-Build location on H1:
+## Hard blockers
 
-- Kernel tree: `/tmp/android14-kernel/`
-- DW3000 source: `/tmp/dw3000-src/`
-- ieee802154.ko: `/tmp/android14-kernel/net/ieee802154/ieee802154.ko`
-- mac802154.ko: `/tmp/android14-kernel/net/mac802154/mac802154.ko`
-- mcps/dw3000: `/tmp/dw3000-src/kernel/{net,drivers}/.../`
+### MODULE_SIG_PROTECT
 
-### Patches applied to dw3000_spi.c (5.10 -> 6.1 API changes)
-
-1. `spi->master->last_cs_enable` removed (member doesn't exist in 6.1)
-2. `dw3000_spi_remove()` return type changed from `int` to `void`
-3. `spi->controller->kworker.task` changed to `kworker->task` (pointer in 6.1)
-
-## Blocker: MODULE_SIG_PROTECT
-
-Both vendor-signed and our custom-built (unsigned) modules are blocked by
-`MODULE_SIG_PROTECT` on GKI 6.1. This enforcement:
+Both vendor-signed and custom-built modules are blocked by MODULE_SIG_PROTECT
+on GKI 6.1. This enforcement:
 
 - Applies to ALL non-init contexts (shell, magisk, service processes)
-- Applies even to unsigned modules built for the exact running kernel
-- Returns EPERM from finit_module() with NO kernel log message
+- Blocks both insmod AND rmmod from userspace
+- Returns EPERM with no kernel log
 - Only modules loaded by init during early boot pass
 
-The Magisk `post-fs-data.sh` runs in `u:r:magisk:s0` context which is
-NOT treated as init context by the kernel's module loading code.
+### Magisk module overlay doesn't help
 
-### What we tried
+Created Magisk module `uwb-dw3000-patched` at `/data/adb/modules/uwb-dw3000-patched/`.
+But vendor_dlkm modules are loaded by init BEFORE Magisk's Magic Mount overlay runs.
+Verified: existing pctt overlay shows different checksums (overlay inactive).
 
-1. insmod from adb shell su -- EPERM
-2. Direct finit_module() syscall -- EPERM
-3. Magisk post-fs-data.sh script -- EPERM (runs as magisk context, not init)
-4. Copying modules to /data/local/tmp -- same EPERM
-5. Loading vendor modules (signed for wrong kernel) -- "exports protected symbol" or EPERM
+### dm-verity on vendor_dlkm
 
-### What works
+vendor_dlkm is on dm-5 (ext4, read-only). `mount -o remount,rw` fails.
+fstab specifies `avb=vbmeta`. Bootloader is unlocked (verifiedbootstate=orange)
+but dm-verity is still enforced for this partition.
 
-- `dw3000_core_tests.ko` loads because it's in the vendor `modules.load` and
-  is loaded by `init` during early boot (the ONLY context that passes sig check)
+### Debugfs register reads return zeros
 
-## Current device state
+With vendor module, all debugfs register files (rx_diag, tx_pwr, channel, etc.)
+return 0x0. The `registers` file returns 0 bytes. `cir_data` is empty.
+The vendor module's debugfs is stub implementations with no live SPI reads.
 
-**Phone is in recovery mode with unauthorized ADB.** Needs physical interaction
-to either navigate recovery menu or reboot. The Magisk `su` binary stopped
-working (likely unrelated to our module -- Magisk on this build may need app
-interaction to set up su for first use after reboot).
+## What works now
+
+| Capability               | Method                                         | Notes                                     |
+| ------------------------ | ---------------------------------------------- | ----------------------------------------- |
+| FiRa ranging at 5Hz      | `cmd uwb start-fira-ranging-session`           | Chip powers on, ranging rounds execute    |
+| Diagnostic notifications | `enable-diagnostics-notification -r -a -c -s`  | flags=39, 3 frames/round                  |
+| RSSI capture             | logcat parsing                                 | 0 without responder, real values with one |
+| Raw UCI data             | raw_ntf_data in ranging reports                | 56-byte payload per round                 |
+| Chip power control       | FiRa session start/stop                        | power=1 during session                    |
+| Capture pipeline         | `uwb_diag_capture.sh` + `parse_diag_logcat.py` | 52 reports in 15s test                    |
+
+## Dead ends (confirmed)
+
+1. Module hot-swap from userspace (MODULE_SIG_PROTECT)
+2. Magisk module overlay for vendor_dlkm (overlay happens after module load)
+3. Vendor_dlkm remount (dm-verity enforced)
+4. Direct register reads via debugfs (vendor module returns zeros)
+5. `/dev/spi*` userspace SPI access (device nodes don't exist)
+6. `/dev/kmem`, `/dev/mem`, `/proc/kcore` (not available on this GKI build)
+7. kprobes on dw3000 functions (no functions in available_filter_functions)
+8. Radar session mode (status_code=4, not supported)
+
+## Paths forward (revised priority order)
+
+### A. Get a second UWB device (HIGHEST VALUE)
+
+With a responder, the existing `cmd uwb` pipeline would produce:
+
+- Real RSSI values for distance estimation and presence detection
+- Actual ranging measurements (distance, AoA)
+- Populated diagnostic data (the chip only fills diagnostics on successful RX)
+- No kernel modification needed
+
+Any UWB phone works: iPhone 11+, Samsung S21+ UWB, Pixel 6/7/8/9 Pro.
+
+### B. Flash custom boot image with MODULE_SIG_PROTECT=n
+
+- Kernel source available, build env on H1
+- Flash custom GKI image to allow our patched module
+- Enables full CIR pipeline including binary patches
+- Risk: could brick if done wrong
+
+### C. Modify vendor_dlkm partition image offline
+
+- dd out the partition, mount loopback, replace dw3000.ko, flash back
+- Bootloader unlocked so flashing should work
+- Requires knowing the exact partition device and layout
+
+### D. UCI-level CIR extraction
+
+- The Qorvo HAL sends vendor-specific UCI extensions
+- logcat shows `Failed to parse received message: Unknown` after diagnostics
+- These may contain CIR data that the Android UWB parser doesn't understand
+- Could capture raw UCI bytes via HAL logging or snooping
 
 ## Verified facts (on-device)
 
-| Finding                 | Detail                                          |
-| ----------------------- | ----------------------------------------------- |
-| DW3000 SPI device       | `spi16.0` on bus `10db0000.spi`                 |
-| Device tree node        | `dw3xxx_prod@0` (compatible: `decawave,dw3000`) |
-| Module dependency chain | ieee802154 -> mac802154 -> mcps802154 -> dw3000 |
-| Modules on filesystem   | All present in `/vendor_dlkm/lib/modules/`      |
-| Qorvo HAL               | Uses `libnl.so` -> `nl802154` netlink           |
-| Running kernel          | `6.1.145-android14-11-gec45f20f38ea-ab15260282` |
-
-## Dead ends
-
-1. Loading modules from any non-init context -- MODULE_SIG_PROTECT blocks
-2. Vendor-signed modules -- wrong vermagic AND protected symbol exports
-3. Unsigned modules -- EPERM regardless of vermagic match
-
-## Paths forward (revised)
-
-### A. Add modules to init's modules.load (RECOMMENDED)
-
-The modules.load file at `/vendor_dlkm/lib/modules/modules.load` is read by init
-at boot. `dw3000.ko` is already listed but its dependencies fail. If we can:
-
-1. Replace the vendor ieee802154.ko/mac802154.ko/mcps802154.ko/dw3000.ko with our
-   custom-built versions (which have correct vermagic for this kernel)
-2. These would be loaded by init (passing MODULE_SIG_PROTECT)
-3. Requires remounting vendor_dlkm as read-write
-
-### B. Build a custom GKI kernel with MODULE_SIG_PROTECT=n
-
-- Kernel source is at `android.googlesource.com/kernel/common` commit `ec45f20f38ea`
-- Already have the build environment set up on H1
-- Would need to flash the new boot image (GKI Image)
-- Most reliable long-term solution
-
-### C. Patch init.insmod to load from /data/local/tmp
-
-- The init.insmod.sh script could be modified to load our modules
-- Requires boot image modification (ramdisk)
-
-### D. KernelSU instead of Magisk
-
-- KernelSU patches the kernel itself, giving true init-level module loading
-- Would require kernel rebuild anyway
-
-## When you're next at the phone
-
-1. **Reboot from recovery** -- select "Reboot system now" from recovery menu
-2. **Open Magisk app** -- this should set up the `su` binary
-3. **Grant su to shell** -- `adb shell su -c id` should trigger a prompt in Magisk app
-4. **Remove our Magisk module** -- `su -c 'rm -rf /data/adb/modules/uwb-modules'`
-5. **Try option A** -- remount vendor_dlkm and replace modules with our built ones
+| Finding                 | Detail                                                |
+| ----------------------- | ----------------------------------------------------- |
+| DW3000 SPI device       | `spi16.0` on bus `10db0000.spi`                       |
+| Device tree node        | `dw3xxx_prod@0` (compatible: `decawave,dw3000`)       |
+| Module dependency chain | ieee802154 -> mac802154 -> mcps802154 -> dw3000       |
+| Modules loaded at boot  | All UWB modules loaded by init, refcount-protected    |
+| Qorvo HAL PID           | 3698 (`android.hardware.qorvo.uwb.service`)           |
+| Vendor service PID      | 3059 (`com.qorvo.uwb.vendorservice`)                  |
+| Running kernel          | `6.1.145-android14-11-gec45f20f38ea-ab15260282`       |
+| UWB chip capabilities   | diagnostics=true, channels=[5,9], aoa_capabilities=31 |
+| Max sessions            | 5 concurrent ranging sessions                         |
