@@ -285,3 +285,38 @@ experiments:
       All 4 patches are to vendor dw3000.ko at file offsets relative to .text
       section start (0x109fc). Hot-swap via: setenforce 0, stop HAL, rmmod chain
       (pctt, nfcc, fira, dw3000), insmod patched, insmod regions, start HAL.
+
+  - id: E022
+    script: tools/analyze_baseline.py
+    date: 2026-05-19
+    name: "CIR baseline statistical analysis"
+    purpose: "Characterize 31-frame 64-bin CIR capture: classify elevated bins as artifacts vs. reflections"
+    result: |
+      31 frames at 50ms FiRa interval (16.7fps), 66 CIR bins per frame.
+      SNR = 6.5 dB (vs 20-30 dB for real UWB signal), confirming RXPTO CIR
+      is accumulator artifacts, not real frame reception.
+
+      Key findings:
+      - 18/64 bins have CoV < 0.05 (near-constant across frames), confirming
+        stale CIR RAM content, not thermal noise or real reflections
+      - Bins 40, 42, 48, 50, 52: CoV = 0.000-0.003 (essentially constant)
+      - 4 stable elevated bins: bin 8 (mean=0.545, CoV=0.023, 4.8m),
+        bin 10 (mean=0.564, CoV=0.007, 6.0m), bin 53 (mean=0.544, CoV=0.101, 31.8m),
+        bin 58 (mean=0.612, CoV=0.062, 34.8m)
+      - Bin 58 wins peak in 18/31 (58%) frames
+      - Cross-correlation between elevated bins is low (|r| < 0.3), ruling out
+        systematic gain pattern (bins are independently elevated)
+      - CIRProcessor leading-edge detection jumps wildly (0-35m) with no consistent
+        first path, confirming no coherent signal
+
+      Conclusion: RXPTO CIR captures show CIR RAM initialization artifacts,
+      not environmental reflections. The accumulator runs during the 1.85ms RX
+      window but never receives a correlatable preamble. These artifacts form
+      a reproducible baseline that can be subtracted from future captures with
+      actual signals.
+    verdict: success
+    notes: |
+      Data: data/cir_captures/baseline_50ms_64bins_mags.csv (31x66 magnitudes)
+      Analysis: data/cir_captures/baseline_analysis.csv (per-bin stats)
+      Next: E023 differential CIR with metal reflector to detect reflection peaks
+      above baseline.

@@ -51,20 +51,38 @@ Run PCTT immediately after HAL starts a FiRa session (while chip is still online
 PCTT module bypasses the ENETDOWN check; if start_stop_request is still true, the chip should stay
 powered for continuous RX.
 
+## Session 4: Baseline Analysis (2026-05-19)
+
+### E022: CIR baseline characterization
+
+Ran statistical analysis (tools/analyze_baseline.py) on 31-frame 64-bin capture:
+
+| Metric               | Value              | Implication               |
+| -------------------- | ------------------ | ------------------------- |
+| Mean SNR             | 6.5 dB             | Below real UWB (20-30 dB) |
+| Bins with CoV < 0.05 | 18/64              | Near-constant = stale RAM |
+| Dominant peak bin    | 58 (58% of frames) | Accumulator artifact      |
+| Noise floor CoV      | 0.099              | Stable baseline           |
+
+**Conclusion**: RXPTO CIR = CIR RAM artifacts, not real reflections. Baseline is
+reproducible, suitable for differential subtraction.
+
+### Next: differential CIR with metal reflector
+
+Place reflector at known distances, subtract baseline to isolate new peaks.
+Reflector at d meters -> peak at bin = 2d / 0.6m (round-trip).
+
 ## What We Need (revised)
 
-**Either** a second UWB device **or** a patched dw3000.ko that reads CIR on RXPTO.
+**Patched dw3000.ko already working** (5-patch binary recipe). Next steps are analytical.
 
-### Unblocking options (ranked by effort)
+### Remaining options for stronger CIR signal
 
-1. **Get a DWM3000 eval board** (~$30-50 from Qorvo/Mouser). Acts as ranging responder.
-   CIR capture works immediately via existing UCI diagnostics pipeline.
-2. **Disable dm-verity + replace dw3000.ko** with source-patched version that reads CIR on
-   RXPTO. Requires: `avbctl disable-verity`, reboot, remount vendor_dlkm rw, copy patched
-   module, reboot. Source patch: add `dw3000_read_frame_cir_data(dw, NULL, 0)` call in
-   `dw3000_isr_handle_rxto_event` before `mcps802154_rx_timeout`.
-3. **Build dw3000.ko from exact kernel source** (commit ec45f20f38ea) with matching
-   vermagic/CRCs for hot-swap via rmmod+insmod (proven to work in this session).
+1. **Metal reflector experiment**: capture CIR with/without reflector, subtract baseline
+2. **Coherent averaging**: average N frames to improve SNR by sqrt(N)
+3. **Increase RX window**: modify FiRa session params for longer preamble accumulation
+4. **Build dw3000.ko from source**: add CIR read on RXPTO with configurable accumulator
+   length (up to 1016 samples). Requires kernel source commit ec45f20f38ea.
 
 ## What Works Without a Partner
 
