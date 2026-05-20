@@ -350,3 +350,37 @@ experiments:
       Link budget shows: 10cm foil at 1m gives +28 dB SNR IF monostatic
       were possible. The signal strength is not the issue; the timing is.
       A second UWB device is required for any CIR signal measurement.
+
+  # Session 4b: Alternative Paths (2026-05-19)
+
+  - id: E024
+    script: tools/pctt_inject.c
+    date: 2026-05-19
+    name: "MCPS802154 testmode via netlink command 12"
+    purpose: "Try testmode commands (RX_DIAG, CW_TONE, CONTINUOUS_TX) via mcps802154 CMD_TESTMODE instead of PCTT region"
+    result: "pending -- requires on-device testing"
+    verdict: pending
+    notes: |
+      Key difference from E007 (nl802154 testmode): this uses mcps802154
+      netlink family (id 34), cmd MCPS802154_CMD_TESTMODE (12), with
+      DW3000_TM_ATTR_CMD nested in ATTR_TESTDATA. May work even if
+      CONFIG_MCPS802154_TESTMODE is disabled, because the handler might
+      be in the dw3000 driver itself (not mcps802154 core).
+      Also prepared: dw3000_explore_regs.sh (register read exploration),
+      dw3000_binary_search.sh (binary analysis for loopback symbols).
+
+  - id: E025
+    script: tools/dw3000_explore_regs.sh
+    date: 2026-05-19
+    name: "DW3000 register exploration for loopback/test modes"
+    purpose: "Read all accessible DW3000 registers via debugfs, check if register files are writable, identify test/loopback control bits"
+    result: "pending -- requires on-device testing"
+    verdict: pending
+    notes: |
+      Key registers to investigate:
+      - ACK_RESP_T (0x36): controls TX-to-RX delay
+      - PMSC_CTRL0 (0x70000): power management, may have test enables
+      - CLK_CTRL (0x70036): accumulator clock control
+      - SYS_CFG (0x10): system configuration bits
+      If register files are writable via debugfs, direct chip configuration
+      becomes possible (loopback, continuous RX, custom timing).
