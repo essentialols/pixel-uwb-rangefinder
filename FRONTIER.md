@@ -300,3 +300,20 @@ due to kernel version ABI mismatch. The fix needs a NEW binary patch that:
    52-byte patches (which crash when combined with CIA bypass)
 3. The new RXPTO patch must be a minimal trampoline: save regs, call
    read_frame_cir_data, restore regs, return to original RXPTO flow
+
+## Session 4 final state (2026-05-20 03:00)
+
+**v5b trampoline crashes during active sessions.** acc_clken or read_cir_data
+have preconditions unmet in RXPTO interrupt context. Hard lockup, no pstore trace.
+
+**What works reliably:**
+- v2 kernel (MODULE_SIG_PROTECT bypass) boots and persists
+- Module swap (atomic: disable-uwb + stop-hal + kill + rmmod + insmod)
+- v5b module loads, probes SPI, doesn't crash at idle
+- Crashes ONLY when RXPTO fires during active session
+
+**Next session priorities:**
+1. **Second UWB device** (instant results, zero patches needed)
+2. Debug acc_clken crash (try calling ONLY acc_clken without read_cir_data)
+3. Direct SPI register write to accumulator clock instead of calling acc_clken
+4. Find exact LineageOS kernel source for matching ABI module build
