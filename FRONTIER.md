@@ -226,11 +226,34 @@ a way to disable modversion checking.
    because RXPTO handler doesn't call read_frame_cir_data.
 2. **Combined** (RXPTO patches + CIA bypass): device crash. The 52-byte binary patches
    interact badly with the CIA bypass.
-3. **Source-built** with RXPTO CIR patch: compiles but modversions CRC mismatch
-   (6.1.167 build vs 6.1.145 device).
+3. **Source-built, vermagic patched**: modversions CRC mismatch rejected.
+4. **Source-built + check_version kernel bypass**: vermagic mismatch rejected.
+5. **Source-built + correct UTS_RELEASE**: crashes on insmod (struct ABI mismatch
+   between AOSP 6.1.167 and device 6.1.145 headers). Kernel panic on probe.
+6. **check_version + same_magic kernel bypass**: broke rmmod (same_magic patch has
+   side effects on module unloading path).
+
+### Key finding: magiskboot repack non-determinism
+
+Successive `magiskboot repack` runs produce different LZ4-compressed kernel sizes
+(16567065, 16567069, 16567070, 16567073). Only the FIRST repack from the original
+boot partition reliably produces a bootable image. Subsequent repacks from
+already-repacked boot fail to load kernel patches correctly. Always repack from
+the original `/tmp/patched_boot_v2.img` (known working).
+
+### Working state (v2 kernel)
+
+Boot partition has single-patch kernel (MODULE_SIG_PROTECT bypass at 0x17aee4).
+rmmod/insmod work for same-version vendor binary modules. Source-built modules
+crash due to struct ABI mismatch.
 
 ### Remaining path to non-zero CIR
 
-Find exact kernel source for commit `ec45f20f38ea` (running kernel), build with
-matching config. Or: write a new minimal RXPTO CIR patch that directly calls
-acc_clken + read_cir_data via SPI, bypassing the CIA/completion/mutex path entirely.
+**Binary patch of vendor module is the ONLY viable path.** Source-built modules crash
+due to kernel version ABI mismatch. The fix needs a NEW binary patch that:
+
+1. Finds the CIA check TBZ (at 0x253b8 in vendor binary) and NOPs it
+2. Adds the read_frame_cir_data call to the RXPTO handler WITHOUT using the existing
+   52-byte patches (which crash when combined with CIA bypass)
+3. The new RXPTO patch must be a minimal trampoline: save regs, call
+   read_frame_cir_data, restore regs, return to original RXPTO flow
