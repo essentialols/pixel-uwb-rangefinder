@@ -101,14 +101,35 @@ The vendor module's debugfs is stub implementations with no live SPI reads.
 
 ## What works now
 
-| Capability               | Method                                         | Notes                                     |
-| ------------------------ | ---------------------------------------------- | ----------------------------------------- |
-| FiRa ranging at 5Hz      | `cmd uwb start-fira-ranging-session`           | Chip powers on, ranging rounds execute    |
-| Diagnostic notifications | `enable-diagnostics-notification -r -a -c -s`  | flags=39, 3 frames/round                  |
-| RSSI capture             | logcat parsing                                 | 0 without responder, real values with one |
-| Raw UCI data             | raw_ntf_data in ranging reports                | 56-byte payload per round                 |
-| Chip power control       | FiRa session start/stop                        | power=1 during session                    |
-| Capture pipeline         | `uwb_diag_capture.sh` + `parse_diag_logcat.py` | 52 reports in 15s test                    |
+| Capability               | Method                                         | Notes                                       |
+| ------------------------ | ---------------------------------------------- | ------------------------------------------- |
+| FiRa ranging at 5Hz      | `cmd uwb start-fira-ranging-session`           | Chip powers on, ranging rounds execute      |
+| Module rmmod/insmod      | v2 kernel patch (MODULE_SIG_PROTECT bypass)    | Vendor binary modules only (ABI must match) |
+| CIR frame pipeline       | patched vendor dw3000.ko + cir_stream          | 45 frames at 5Hz, zero I/Q without signal   |
+| SPI bus access           | TX_PWR = 0xd3d35fd3 via debugfs                | Proves SPI reads work with patched module   |
+| Diagnostic notifications | `enable-diagnostics-notification -r -a -c -s`  | flags=39, 3 frames/round                    |
+| RSSI capture             | logcat parsing                                 | 0 without responder, real values with one   |
+| Capture pipeline         | `uwb_diag_capture.sh` + `parse_diag_logcat.py` | 52 reports in 15s test                      |
+
+## The frontier: what's just beyond reach
+
+The exact boundary of what we've achieved:
+
+- CIR frame STRUCTURE works (timestamps, counters, 256-bin allocation)
+- CIR frame DATA is zero (accumulator not read by driver on RXPTO)
+- Root cause pinpointed to ONE ARM64 instruction (TBZ at vendor binary offset 0x253b8)
+- Source-built modules crash (ABI mismatch between 6.1.167 build and 6.1.145 device)
+- Binary patches exist but the RXPTO+CIA combination crashes
+
+**The single remaining step:** a clean vendor binary patch that NOPs the CIA check
+(0x253b8) AND adds a BL to read_frame_cir_data from the RXPTO handler,
+without using the broken 52-byte patches. This requires finding the exact
+call sequence in the vendor binary (scout agent analyzing this now).
+
+**Hardware constraint confirmed:** DW3000 accumulator is only populated during
+active RX (while antenna is listening). After RXPTO fires, the chip transitions
+to IDLE and the accumulator may be cleared. The driver must read it during or
+immediately after the RX window, before the state machine clears it.
 
 ## Why CIR is empty even with diagnostics enabled
 
