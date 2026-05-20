@@ -26,7 +26,7 @@ for bin in build/*; do
 done
 
 # Shell scripts
-for sh in tools/uwb_autonomous.sh tools/dw3000_regwrite.sh tools/dw3000_explore_regs.sh tools/dw3000_binary_search.sh tools/reflector_experiment.sh; do
+for sh in tools/uwb_autonomous.sh tools/uwb_testmode_capture.sh tools/uwb_energy_sense.sh tools/dw3000_regwrite.sh tools/dw3000_explore_regs.sh tools/dw3000_binary_search.sh tools/reflector_experiment.sh; do
     name=$(basename $sh)
     echo "  $name"
     adb push "$sh" "$DEST/$name" >/dev/null
@@ -34,9 +34,15 @@ for sh in tools/uwb_autonomous.sh tools/dw3000_regwrite.sh tools/dw3000_explore_
 done
 
 echo ""
+echo ""
 echo "=== Deployed. Quick start ==="
-echo "  adb shell $DEST/dw3000_regwrite.sh test-write"
-echo "  adb shell nohup $DEST/uwb_autonomous.sh 500 200 0 256 &"
-echo "  adb shell cat $DEST/uwb_capture/status.txt"
-echo "  adb pull $DEST/uwb_capture/ data/cir_captures/latest/"
-echo "  ./tools/analyze_capture.sh data/cir_captures/latest/"
+echo ""
+echo "  Option 1: Testmode continuous RX (RECOMMENDED, no second device)"
+echo "    adb shell nohup $DEST/uwb_testmode_capture.sh 60 &"
+echo "    adb pull $DEST/testmode_capture/ data/cir_captures/testmode/"
+echo "    python3 tools/analyze_energy.py data/cir_captures/testmode/energy.csv"
+echo ""
+echo "  Option 2: FiRa CIR streaming (256 bins)"
+echo "    adb shell nohup $DEST/uwb_autonomous.sh 500 200 0 256 &"
+echo "    adb pull $DEST/uwb_capture/ data/cir_captures/latest/"
+echo "    ./tools/analyze_capture.sh data/cir_captures/latest/"
