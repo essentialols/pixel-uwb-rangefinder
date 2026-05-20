@@ -93,16 +93,37 @@ The vendor module's debugfs is stub implementations with no live SPI reads.
 | Chip power control       | FiRa session start/stop                        | power=1 during session                    |
 | Capture pipeline         | `uwb_diag_capture.sh` + `parse_diag_logcat.py` | 52 reports in 15s test                    |
 
+## Why CIR is empty even with diagnostics enabled
+
+The diagnostic CIR/RSSI/AoA fields are only populated on **successful packet reception**
+(RXFCG event). Without a responder device, the initiator transmits and times out. No
+received packets means no CIR data in diagnostics.
+
+The binary-patched module worked differently: it hooked the **RXPTO** (preamble timeout)
+interrupt, which fires every ranging round even without a responder. This gave
+noise-floor CIR data from the open receive window. The standard UCI diagnostic path
+does not read CIR on timeout events.
+
+The Qorvo HAL has full CIR parsing code (`get_cir_window_sample`, `uci_diag_ntf_add_cir`,
+`get_cirs_diag`) but never gets data from the kernel because the kernel only reads
+CIR accumulator on RXFCG, which requires an actual received signal.
+
+The "Unknown" message (header 1,0,8) in logcat is a vendor core notification,
+not CIR data. strace on HAL fails (ptrace blocked by SELinux).
+
 ## Dead ends (confirmed)
 
-1. Module hot-swap from userspace (MODULE_SIG_PROTECT)
+1. Module hot-swap from userspace (MODULE_SIG_PROTECT blocks both insmod and rmmod)
 2. Magisk module overlay for vendor_dlkm (overlay happens after module load)
-3. Vendor_dlkm remount (dm-verity enforced)
-4. Direct register reads via debugfs (vendor module returns zeros)
+3. Vendor_dlkm remount (dm-verity enforced, fstab specifies avb=vbmeta)
+4. Direct register reads via debugfs (vendor module returns zeros for all registers)
 5. `/dev/spi*` userspace SPI access (device nodes don't exist)
 6. `/dev/kmem`, `/dev/mem`, `/proc/kcore` (not available on this GKI build)
 7. kprobes on dw3000 functions (no functions in available_filter_functions)
-8. Radar session mode (status_code=4, not supported)
+8. Radar session mode (status_code=4, not supported by this chip)
+9. UCI diagnostic CIR without responder (CIR only populated on successful RX)
+10. strace on HAL process (ptrace blocked by SELinux)
+11. nlmon netlink monitoring (RTNETLINK operation not permitted)
 
 ## Paths forward (revised priority order)
 
@@ -130,12 +151,11 @@ Any UWB phone works: iPhone 11+, Samsung S21+ UWB, Pixel 6/7/8/9 Pro.
 - Bootloader unlocked so flashing should work
 - Requires knowing the exact partition device and layout
 
-### D. UCI-level CIR extraction
+### D. Noise-floor CIR (requires B or C first)
 
-- The Qorvo HAL sends vendor-specific UCI extensions
-- logcat shows `Failed to parse received message: Unknown` after diagnostics
-- These may contain CIR data that the Android UWB parser doesn't understand
-- Could capture raw UCI bytes via HAL logging or snooping
+The binary-patched module reads CIR on RXPTO, giving noise-floor data
+useful for environmental sensing. This path requires either custom kernel (B)
+or partition modification (C) to bypass MODULE_SIG_PROTECT.
 
 ## Verified facts (on-device)
 
