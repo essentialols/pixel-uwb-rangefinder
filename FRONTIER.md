@@ -210,11 +210,27 @@ returns without reading the accumulator.
 ### Fix required
 
 Bypass the CIA check for RXPTO reads by either:
+
 1. NOP the conditional branch in the vendor binary (find TBZ/CBZ for CIA flag)
 2. Build from source with CIA check removed (blocked by kernel version mismatch 6.1.167 vs 6.1.145)
 3. Also need `dw3000_acc_clken(dw, true)` before the read (accumulator clock must be on)
 
 Source-built module from AOSP (compiled on H1) works but can't load due to
-modversions CRC mismatch. Vermagic patching and __versions transplant attempted
+modversions CRC mismatch. Vermagic patching and \_\_versions transplant attempted
 but kernel rejects mismatched symbol CRCs. Need exact kernel source match or
 a way to disable modversion checking.
+
+### Attempted fixes (session 4)
+
+1. **CIA-bypass-only** (vendor .ko + NOP at 0x253b8): loads but CIR blocks forever
+   because RXPTO handler doesn't call read_frame_cir_data.
+2. **Combined** (RXPTO patches + CIA bypass): device crash. The 52-byte binary patches
+   interact badly with the CIA bypass.
+3. **Source-built** with RXPTO CIR patch: compiles but modversions CRC mismatch
+   (6.1.167 build vs 6.1.145 device).
+
+### Remaining path to non-zero CIR
+
+Find exact kernel source for commit `ec45f20f38ea` (running kernel), build with
+matching config. Or: write a new minimal RXPTO CIR patch that directly calls
+acc_clken + read_cir_data via SPI, bypassing the CIA/completion/mutex path entirely.
