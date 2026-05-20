@@ -36,8 +36,14 @@ def load_stats(path):
 
 
 def main():
-    mag_path = "data/cir_captures/baseline_50ms_64bins_mags.csv"
-    stats_path = "data/cir_captures/baseline_50ms_64bins.csv"
+    import argparse
+    parser = argparse.ArgumentParser(description="CIRProcessor analysis")
+    parser.add_argument('--magnitudes', default="data/cir_captures/baseline_50ms_64bins_mags.csv")
+    parser.add_argument('--stats', default="data/cir_captures/baseline_50ms_64bins.csv")
+    args = parser.parse_args()
+
+    mag_path = args.magnitudes
+    stats_path = args.stats
 
     frames = load_magnitudes(mag_path)
     stats = load_stats(stats_path)

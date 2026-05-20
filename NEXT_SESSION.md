@@ -2,25 +2,58 @@
 
 ## Current State (2026-05-19)
 
-The CIR streaming pipeline is fully operational but captures only receiver thermal
-noise because monostatic radar is physically impossible with the DW3000 in FiRa mode.
+CIR streaming pipeline operational. AOSP source analysis confirmed debugfs registers
+are WRITABLE, opening new paths for chip configuration without kernel rebuilds.
 
 ### What's Working
 
 - 5-patch binary dw3000.ko: CIR read on RXPTO during FiRa sessions
 - CIR streaming at 16.7fps via cir_stream + cir_stream_decode.py
-- Module hot-swap procedure (setenforce 0, stop HAL, rmmod chain, insmod, start HAL)
-- Noise floor fully characterized: Rayleigh-distributed, white, independent frames
-- Analysis tools: baseline stats, averaging, differential, phase, noise, link budget
+- Autonomous capture script (runs unattended, screen off)
+- One-command analysis pipeline (analyze_capture.sh)
+- Noise floor characterized: Rayleigh-distributed, white, independent
 
-### Why No Signal
+### NEW: Debugfs Register Writes (E025)
 
-The DW3000 is half-duplex: TX and RX never overlap. After transmitting, the chip waits
-200-500us before opening the RX window. In that time, any indoor reflection (speed of
-light round-trip < 100ns for 15m) arrives and is lost. The RX window only sees thermal
-noise from the receiver frontend.
+AOSP source confirms register files are read-write. Key writable registers:
 
-## Option A: Borrow a Second UWB Device (RECOMMENDED)
+- TX_TEST (0x70028): enable CW tone (write 0x01)
+- ACK_RESP_T (0x36): TX-to-RX delay control
+- cir_config: "count N filter 0xX offset Y" (up to 1016 CIR bins)
+- SYS_CFG (0x10): system configuration (WP, writable when inactive)
+
+### Why No Signal Yet
+
+The DW3000 is half-duplex: TX and RX never overlap. Monostatic radar is impossible
+for indoor distances (TX-to-RX dead zone > 300m). But CW tone via register write
+may create antenna self-coupling detectable in the first few CIR bins.
+
+## Quick Start: Autonomous Capture (no second device needed)
+
+```bash
+# 1. One-time push (ADB connected)
+adb root
+adb push cir_stream /data/local/tmp/
+adb push tools/uwb_autonomous.sh tools/dw3000_regwrite.sh /data/local/tmp/
+adb shell chmod +x /data/local/tmp/uwb_autonomous.sh /data/local/tmp/cir_stream /data/local/tmp/dw3000_regwrite.sh
+
+# 2. First: test register writes
+adb shell /data/local/tmp/dw3000_regwrite.sh test-write
+
+# 3. Run autonomous capture (500 frames, 200ms interval, CW tone ON)
+adb shell nohup /data/local/tmp/uwb_autonomous.sh 500 200 1 &
+# disconnect ADB, screen off, walk away
+
+# 4. Check status later
+adb shell cat /data/local/tmp/uwb_capture/status.txt
+
+# 5. Pull and analyze
+adb pull /data/local/tmp/uwb_capture/ data/cir_captures/latest/
+./tools/analyze_capture.sh data/cir_captures/latest/ \
+    --baseline data/cir_captures/baseline_50ms_64bins_mags.csv
+```
+
+## Option A: Borrow a Second UWB Device
 
 Any of these work as a FiRa responder:
 
@@ -28,20 +61,7 @@ Any of these work as a FiRa responder:
 - Samsung Galaxy S21+, S22+, S23+, S24+ (UWB models only)
 - Google Pixel 6 Pro, 7 Pro, 8 Pro, 9 Pro
 
-### Quick Start with Second Device
-
-1. On the second device, install a UWB ranging app (or use `cmd uwb` if rooted)
-2. On the Pixel 7 Pro, run the hot-swap and capture:
-   ```bash
-   ./tools/uwb_hotswap_capture.sh 100 200
-   ```
-3. Analyze the capture:
-   ```bash
-   python3 tools/cir_stream_decode.py data/cir_captures/*/capture.bin \
-     --csv stats.csv --magnitudes mags.csv --full
-   python3 tools/cir_diff.py --baseline data/cir_captures/baseline_50ms_64bins_mags.csv \
-     --test mags.csv
-   ```
+Use the same autonomous script, just start a ranging app on the second device first.
 
 ### What to Expect with Signal
 
