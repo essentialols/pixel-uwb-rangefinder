@@ -432,3 +432,26 @@ experiments:
         dw3000_binary_search.sh: binary symbol analysis
         uwb_autonomous.sh: unattended capture with CIR expansion
         analyze_capture.sh: one-command post-capture analysis pipeline
+
+  - id: E026
+    script: tools/uwb_energy_sense.sh
+    date: 2026-05-19
+    name: "Passive RF energy sensing via diagnostic registers"
+    purpose: "Detect environmental changes by reading DW3000 diagnostic registers during RXPTO"
+    result: |
+      Pre-analysis of existing 31-frame baseline CIR data:
+      - Cross-bin correlation of frame-to-frame changes: -0.01 (independent)
+      - PCA: PC1 explains 21.5% (no dominant environmental component)
+      - Some bins show drift (bin 0: +22%, bin 12: -14%) over 1.8s
+      - 1.8s window too short for environmental sensitivity test
+
+      Need: minutes-long capture with deliberate movement to test
+      whether diagnostic registers (IP_DIAG, DGC, ADC_THRESH) show
+      environmental sensitivity during RXPTO.
+    verdict: pending
+    notes: |
+      Frontier: passive UWB sensing without second device. Analogous
+      to WiFi CSI-based sensing but at 6.5/8 GHz with 500 MHz bandwidth.
+      Registers to test: IP_DIAG0-12 (0xc0028-0xc0058), CIA_DIAG0
+      (0xc0020), DGC_CFG (0x30018), ADC_THRESH_DBG (0x3004c).
+      Tools: uwb_energy_sense.sh (on-device), analyze_energy.py (laptop).
