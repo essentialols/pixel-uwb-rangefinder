@@ -309,14 +309,44 @@ experiments:
       - CIRProcessor leading-edge detection jumps wildly (0-35m) with no consistent
         first path, confirming no coherent signal
 
-      Conclusion: RXPTO CIR captures show CIR RAM initialization artifacts,
-      not environmental reflections. The accumulator runs during the 1.85ms RX
-      window but never receives a correlatable preamble. These artifacts form
-      a reproducible baseline that can be subtracted from future captures with
-      actual signals.
+      UPDATED after phase analysis (cir_phase_analysis.py) and noise
+      characterization (cir_noise_characterize.py):
+      - CIR data IS real receiver thermal noise, NOT stale RAM
+      - Phase distribution is uniform (chi-squared 9.4, Rayleigh sigma ratio 1.049)
+      - Spatial and temporal correlations near zero (white noise)
+      - 20/21 bins have varying I/Q across captures (only bin 20 = constant zero)
+      - The "stable" bins (CoV < 0.05) have hardware DC bias dominating noise
     verdict: success
     notes: |
       Data: data/cir_captures/baseline_50ms_64bins_mags.csv (31x66 magnitudes)
       Analysis: data/cir_captures/baseline_analysis.csv (per-bin stats)
-      Next: E023 differential CIR with metal reflector to detect reflection peaks
-      above baseline.
+      Detection thresholds: 3-sigma=0.760, 5-sigma=1.035, CFAR-10dB=1.097
+
+  - id: E023
+    script: tools/uwb_link_budget.py
+    date: 2026-05-19
+    name: "Monostatic radar impossibility analysis"
+    purpose: "Determine if metal reflectors can produce CIR peaks without a second device"
+    result: |
+      MONOSTATIC RADAR IS NOT POSSIBLE with DW3000 in FiRa mode.
+
+      TX-to-RX turnaround time is minimum 2us (hardware switching),
+      typically 200-500us (FiRa protocol timing). At 2us turnaround,
+      reflections from objects closer than 300m arrive BEFORE the RX
+      window opens. ALL indoor reflections are in the TX-to-RX dead zone.
+
+      This is a fundamental limitation of half-duplex UWB transceivers:
+      the chip is either transmitting or receiving, never both. The DW3000
+      has a single antenna path, no separate TX/RX chains for simultaneous
+      operation.
+
+      The CIR data captured during RXPTO is real receiver thermal noise
+      (confirmed by Rayleigh distribution, uniform phase, white noise).
+      No amount of reflector placement or signal processing can produce
+      a reflection peak, because the reflected signal physically arrives
+      during the dead zone and is never sampled.
+    verdict: dead_end
+    notes: |
+      Link budget shows: 10cm foil at 1m gives +28 dB SNR IF monostatic
+      were possible. The signal strength is not the issue; the timing is.
+      A second UWB device is required for any CIR signal measurement.

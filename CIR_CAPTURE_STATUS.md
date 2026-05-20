@@ -64,25 +64,42 @@ Ran statistical analysis (tools/analyze_baseline.py) on 31-frame 64-bin capture:
 | Dominant peak bin    | 58 (58% of frames) | Accumulator artifact      |
 | Noise floor CoV      | 0.099              | Stable baseline           |
 
-**Conclusion**: RXPTO CIR = CIR RAM artifacts, not real reflections. Baseline is
-reproducible, suitable for differential subtraction.
+**Updated conclusion** (after phase analysis and noise characterization):
 
-### Next: differential CIR with metal reflector
+- CIR data IS real receiver thermal noise (NOT stale RAM)
+- Phase distribution is uniform (Rayleigh magnitude, chi-squared 9.4)
+- Spatial and temporal correlations near zero (white noise)
+- Rayleigh sigma ratio: 1.049 (nearly perfect fit)
+- The "stable" bins (CoV < 0.05) likely have hardware DC bias dominating noise
 
-Place reflector at known distances, subtract baseline to isolate new peaks.
-Reflector at d meters -> peak at bin = 2d / 0.6m (round-trip).
+### E023: Monostatic radar impossibility (CRITICAL)
+
+**Reflector experiment would NOT work.** Analysis of DW3000 FiRa timing:
+
+- TX-to-RX turnaround: minimum 2us (hardware), typically 200-500us (FiRa)
+- At 2us turnaround: reflections from < 300m arrive BEFORE RX window opens
+- ALL indoor reflections are missed in monostatic mode
+- The 1.85ms RX window listens for a RESPONDER frame, not reflections
+
+This is a fundamental physics limitation of half-duplex UWB transceivers: the chip
+is either transmitting or receiving, never both. Reflections from nearby objects
+arrive during the TX-to-RX dead zone.
 
 ## What We Need (revised)
 
-**Patched dw3000.ko already working** (5-patch binary recipe). Next steps are analytical.
+**A second UWB device is required** for any CIR signal measurement. Without one:
 
-### Remaining options for stronger CIR signal
+- Noise floor characterization is complete (real thermal noise, Rayleigh distributed)
+- CIR streaming pipeline works (16.7fps, 64 bins per frame)
+- All analysis tools are ready for real signal data
 
-1. **Metal reflector experiment**: capture CIR with/without reflector, subtract baseline
-2. **Coherent averaging**: average N frames to improve SNR by sqrt(N)
-3. **Increase RX window**: modify FiRa session params for longer preamble accumulation
-4. **Build dw3000.ko from source**: add CIR read on RXPTO with configurable accumulator
-   length (up to 1016 samples). Requires kernel source commit ec45f20f38ea.
+### Options for getting a UWB signal (no purchases)
+
+1. **Borrow a UWB-capable device** (iPhone 11+, Samsung Galaxy S21+, Pixel 6 Pro+)
+2. **Find ambient UWB**: other phones/AirTags transmitting nearby (unlikely, wrong preamble)
+3. **PCTT continuous RX**: bypass HAL scheduler lock (E015-E018, partially working)
+4. **DW3000 loopback mode**: feed TX directly to RX via internal path (untested)
+5. **Build from source**: custom dw3000.ko with TX_TO_RX_DELAY=0 (still limited by 2us HW turnaround)
 
 ## What Works Without a Partner
 
