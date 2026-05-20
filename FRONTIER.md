@@ -398,13 +398,15 @@ Attempted fix: NOP the spinlock + neutralize relocations (v8c). Fails because
 the vendor integrity check rejects ANY modification beyond the single redirect
 at 0x210a0 + exact trampoline_only layout at 0x215b8.
 
-### CORRECTION: "integrity check" was actually a timing issue
+### CORRECTION: cir_config hang is NON-DETERMINISTIC
 
-The cir_config write hang was NOT a vendor integrity check. It was a TIMING
-issue: the module's async probe initialization must complete before debugfs
-writes succeed. Adding `sleep 5` between insmod and cir_config resolves this
-for all module variants (vendor, v7, v6d, v9b). v8c (spinlock NOP + relocation
-neutralization) genuinely fails for a different reason.
+The cir_config write hang is NOT a vendor integrity check. It's a non-deterministic
+timing issue: sometimes succeeds with 5s delay, sometimes hangs permanently. The same
+module + same sequence produces different results across reboots. When it hangs, the
+writing process enters R state (100% CPU spin) in kernel space, and only a reboot clears
+the stuck state (kill -9 can't release a kernel mutex from a running process).
+
+Verified affected: vendor module AND all patched variants. Not specific to our patches.
 
 ### Confirmed crash: cir_config + ranging = spinlock/mutex collision
 

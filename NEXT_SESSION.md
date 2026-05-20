@@ -70,11 +70,11 @@ Need source matching `6.1.145-android14-11-gec45f20f38ea-ab15260282`.
 Would allow building a module with correct ABI, bypassing all binary patching.
 Check LineageOS build manifests for the exact kernel commit.
 
-### 3. Exploit Trampoline Timing
+### 3. Binary Patching: Exhausted (session 5 conclusion)
 
-The trampoline_only layout passes the integrity check and acc_clken works when
-mutex is uncontested. Potential approach:
+12 patch versions tested (v5b through v9b). Remaining blockers:
 
-- Trampoline enables acc clock (fast mutex trylock succeeds)
-- Userspace poller reads CIR data immediately after RXPTO via debugfs
-- Requires tight timing coordination
+- cir_config write is non-deterministic (hangs randomly, affects vendor module too)
+- read_cir_data crashes from spinlock context (mutex contention)
+- DW3000 accumulator likely cleared before RXPTO fires (hardware timing)
+- Debugfs handlers are stubs (no live SPI reads in vendor module)
