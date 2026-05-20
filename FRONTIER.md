@@ -1,8 +1,25 @@
 # Frontier Analysis -- What's Real, What's Not, What's Next
 
-**Updated:** 2026-05-19, session 3 (cmd uwb discovery + diagnostic capture pipeline)
+**Updated:** 2026-05-20, session 4 (MODULE_SIG_PROTECT bypassed, full CIR pipeline working)
 
-## Major discoveries this session
+## BREAKTHROUGH: MODULE_SIG_PROTECT bypassed via kernel binary patch
+
+**4-byte kernel patch** disables GKI module signature protection:
+
+- Offset `0x17aee4` in decompressed kernel Image
+- Replaced `cset w0, ne` (0x1a9f07e0) with `mov w0, #1` (0x52800020)
+- Function `gki_is_module_unprotected_symbol` now always returns true
+- PAC (paciasp/autiasp) preserved, only the return value is forced
+- Flashed via `fastboot flash boot_a` (slot b unusable due to empty system partitions)
+- Boot_a backup at `~/boot_a_original_backup.img` on H1
+
+**Result:** `rmmod dw3000` and `insmod dw3000_cir_stream_v3.ko` both succeed.
+Patched module produces 1600-byte CIR frames (256 bins x 6 bytes + 48-byte header)
+and 3208 bytes via cir_stream in a single capture window.
+
+**Recovery:** If boot fails, fastboot → `fastboot flash boot_a boot_a_original_backup.img`
+
+## Major discoveries (session 3)
 
 ### 1. `cmd uwb` shell interface (NEW)
 
