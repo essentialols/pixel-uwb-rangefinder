@@ -10,15 +10,15 @@ The Pixel 7 Pro's UWB module is a Qorvo (formerly Decawave) DW3000, used by Andr
 
 ## Results
 
-| Metric                 | Stock  | This project (target) |
-| ---------------------- | ------ | --------------------- |
-| Ranging precision      | ~10 cm | < 1 cm                |
-| Update rate            | ~10 Hz | TBD                   |
-| Raw CIR access         | No     | Yes (target)          |
-| Multipath profiling    | No     | Yes (target)          |
-| Angle of Arrival       | No     | TBD                   |
-| Through-wall detection | No     | TBD                   |
-| Experiments            | --     | 0 (session 0)         |
+| Metric              | Stock  | This project                                             |
+| ------------------- | ------ | -------------------------------------------------------- |
+| Raw CIR access      | No     | **Yes** (16.7fps streaming via 5-patch binary dw3000.ko) |
+| CIR bins per frame  | 0      | **64** (expandable to 1016 via cir_config)               |
+| Noise floor         | N/A    | **Characterized** (Rayleigh, sigma=0.264, white)         |
+| Multipath profiling | No     | **Ready** (CIRProcessor with leading-edge detection)     |
+| Ranging precision   | ~10 cm | Pending (needs second UWB device for signal)             |
+| Angle of Arrival    | No     | PDoA extraction ready, needs signal                      |
+| Experiments         | 0      | **25** (E001-E025, 4 sessions)                           |
 
 ## Background: why UWB is the RF analog of ToF laser
 
@@ -49,40 +49,32 @@ The CIR is literally the radio equivalent of the ToF photon histogram: a time-do
 | PCTT stack      | `mcps802154_region_pctt.ko` (PHY Compliance Test Tool)         |
 | AOC integration | `aoc_uwb_platform_drv.ko`, `aoc_uwb_service_dev.ko`            |
 
-## Architecture (target)
+## Architecture
 
-```
-Kernel netlink / SPI interface
-        |
-        v
-   dw3000.ko: Qorvo UWB transceiver driver (SPI bus)
-        |
-        v
-   mcps802154.ko: IEEE 802.15.4z MAC scheduling
-        |
-        v
-   mcps802154_region_fira.ko: FiRa TWR (two-way ranging)
-        |
-        v
-   uwb_probe --> raw CIR extraction, timestamp, diagnostics
-        |
-        v
-   CSV / JSON stream --> tools/analyze_cir.py
-```
+See [ARCHITECTURE.md](ARCHITECTURE.md) for full system design, data flow, and file organization.
 
-## Quickstart (target)
+## Quickstart
 
 ```bash
-# Prerequisites: rooted Pixel 7 Pro (Magisk), aarch64 cross-compiler on build host
-make uwb_probe
-adb push uwb_probe /data/local/tmp/
+# Prerequisites: rooted Pixel 7 Pro (Magisk), patched dw3000.ko, cross-compiled cir_stream
 
-# Probe UWB subsystem
-adb shell su -c /data/local/tmp/uwb_probe
+# 1. Push tools to device
+adb root
+adb push cir_stream tools/uwb_autonomous.sh tools/dw3000_regwrite.sh /data/local/tmp/
+adb shell chmod +x /data/local/tmp/uwb_autonomous.sh /data/local/tmp/cir_stream
 
-# When ranging is working:
-adb shell su -c "/data/local/tmp/uwb_range -n 100 -j"   # 100 measurements, JSON output
+# 2. Run autonomous capture (500 frames, 200ms interval, 256 CIR bins)
+adb shell nohup /data/local/tmp/uwb_autonomous.sh 500 200 0 256 &
+
+# 3. Disconnect ADB, screen off, walk away. Check status later:
+adb shell cat /data/local/tmp/uwb_capture/status.txt
+
+# 4. Pull and analyze
+adb pull /data/local/tmp/uwb_capture/ data/cir_captures/latest/
+./tools/analyze_capture.sh data/cir_captures/latest/
 ```
+
+See [NEXT_SESSION.md](NEXT_SESSION.md) for detailed setup and [ARCHITECTURE.md](ARCHITECTURE.md) for system design.
 
 ## Kernel driver source
 
