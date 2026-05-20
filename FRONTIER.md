@@ -187,3 +187,34 @@ or partition modification (C) to bypass MODULE_SIG_PROTECT.
 | Running kernel          | `6.1.145-android14-11-gec45f20f38ea-ab15260282`       |
 | UWB chip capabilities   | diagnostics=true, channels=[5,9], aoa_capabilities=31 |
 | Max sessions            | 5 concurrent ranging sessions                         |
+
+## Root cause: CIA flag check blocks CIR on RXPTO (session 4 deep analysis)
+
+Source analysis of `dw3000_read_frame_cir_data()` (dw3000_core.c:6801) reveals:
+
+```c
+if (!(dw->rx.flags & DW3000_RX_FLAG_CIA)) {
+    rc = -ENODATA;
+    goto read_frame_cir_error;
+}
+```
+
+The CIA (Channel Impulse Analysis) algorithm only runs on successful packet reception
+(RXFCG). On RXPTO (preamble timeout), the CIA flag is never set, so
+`dw3000_read_frame_cir_data` returns -ENODATA and skips the accumulator read entirely.
+
+**This explains why binary patches produce frames with valid headers but zero I/Q:**
+the patched RXPTO handler calls `read_frame_cir_data`, but the CIA check immediately
+returns without reading the accumulator.
+
+### Fix required
+
+Bypass the CIA check for RXPTO reads by either:
+1. NOP the conditional branch in the vendor binary (find TBZ/CBZ for CIA flag)
+2. Build from source with CIA check removed (blocked by kernel version mismatch 6.1.167 vs 6.1.145)
+3. Also need `dw3000_acc_clken(dw, true)` before the read (accumulator clock must be on)
+
+Source-built module from AOSP (compiled on H1) works but can't load due to
+modversions CRC mismatch. Vermagic patching and __versions transplant attempted
+but kernel rejects mismatched symbol CRCs. Need exact kernel source match or
+a way to disable modversion checking.
