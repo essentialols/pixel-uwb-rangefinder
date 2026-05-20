@@ -370,17 +370,37 @@ experiments:
       dw3000_binary_search.sh (binary analysis for loopback symbols).
 
   - id: E025
-    script: tools/dw3000_explore_regs.sh
+    script: tools/dw3000_regwrite.sh
     date: 2026-05-19
-    name: "DW3000 register exploration for loopback/test modes"
-    purpose: "Read all accessible DW3000 registers via debugfs, check if register files are writable, identify test/loopback control bits"
+    name: "DW3000 register write via debugfs for CW tone"
+    purpose: "Write to DW3000 registers via debugfs to enable CW tone or modify TX-to-RX timing"
     result: "pending -- requires on-device testing"
     verdict: pending
     notes: |
-      Key registers to investigate:
-      - ACK_RESP_T (0x36): controls TX-to-RX delay
-      - PMSC_CTRL0 (0x70000): power management, may have test enables
-      - CLK_CTRL (0x70036): accumulator clock control
-      - SYS_CFG (0x10): system configuration bits
-      If register files are writable via debugfs, direct chip configuration
-      becomes possible (loopback, continuous RX, custom timing).
+      CRITICAL FINDING from AOSP source analysis (dw3000_debugfs.c):
+      Debugfs register files are READ-WRITE by default (S_IRUGO | S_IWUGO).
+      Only DW3000_CHIPREG_RO (flag=2) registers are read-only.
+      DW3000_CHIPREG_WP (flag=4) registers are writable when chip is inactive.
+
+      Register flag definitions (from dw3000_chip.h):
+        DUMP=1 (dump only, fileid addressing)
+        RO=2   (always read-only)
+        WP=4   (write-protected when active)
+        PERM=8 (accessible when chip is off)
+
+      Key writable registers:
+        TX_TEST (0x70028): TX test mode control
+          Bit 0: TX_ENTEST (enable TX test)
+          Bits 3:1: TX_TESTCODE (0=CW tone)
+          Write 0x01 to enable CW tone
+        ACK_RESP_T (0x36): TX-to-RX delay control
+        SYS_CFG (0x10): system configuration (WP)
+        CLK_CTRL (0x110004): clock enables
+
+      Also: cir_config virtual register accepts "count N filter 0xX offset Y"
+      to configure CIR capture size (up to 1016 samples).
+
+      Tools prepared:
+        dw3000_regwrite.sh: test-write, cw-on, cw-off, read, write, cir-expand
+        dw3000_explore_regs.sh: full register survey
+        dw3000_binary_search.sh: binary symbol analysis

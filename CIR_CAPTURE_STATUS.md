@@ -95,11 +95,16 @@ arrive during the TX-to-RX dead zone.
 
 ### Options for getting a UWB signal (no purchases)
 
-1. **Borrow a UWB-capable device** (iPhone 11+, Samsung Galaxy S21+, Pixel 6 Pro+)
-2. **Find ambient UWB**: other phones/AirTags transmitting nearby (unlikely, wrong preamble)
-3. **PCTT continuous RX**: bypass HAL scheduler lock (E015-E018, partially working)
-4. **DW3000 loopback mode**: feed TX directly to RX via internal path (untested)
-5. **Build from source**: custom dw3000.ko with TX_TO_RX_DELAY=0 (still limited by 2us HW turnaround)
+1. **CW tone via debugfs register write (E025, HIGHEST PRIORITY)**:
+   AOSP source confirms debugfs register files are READ-WRITE. Write 0x01 to
+   TX_TEST (0x70028) to enable CW tone. This transmits a continuous wave that
+   leaks into the RX path via antenna coupling. Tool: `dw3000_regwrite.sh cw-on`
+2. **MCPS802154 CMD_TESTMODE (E024)**: send DW3000 testmode commands via netlink.
+   Tool: `pctt_inject --testmode`
+3. **Borrow a UWB-capable device** (iPhone 11+, Samsung Galaxy S21+, Pixel 6 Pro+)
+4. **PCTT continuous RX**: bypass HAL scheduler lock (E015-E018, partially working)
+5. **cir_config expansion**: write "count 256" to cir_config to increase CIR from
+   64 to 256 bins per capture
 
 ## What Works Without a Partner
 
