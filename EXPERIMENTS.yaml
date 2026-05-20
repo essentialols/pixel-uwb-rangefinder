@@ -359,15 +359,25 @@ experiments:
     name: "MCPS802154 testmode via netlink command 12"
     purpose: "Try testmode commands (RX_DIAG, CW_TONE, CONTINUOUS_TX) via mcps802154 CMD_TESTMODE instead of PCTT region"
     result: |
-      AOSP Kbuild analysis: dw3000_testmode.o is conditionally compiled
-      (dw3000-$(CONFIG_MCPS802154_TESTMODE) += dw3000_testmode.o).
-      CONFIG_MCPS802154_TESTMODE is disabled in vendor build, so the
-      testmode handler dw3000_tm_cmd is NOT linked into the vendor
-      dw3000.ko. CMD_TESTMODE will return EOPNOTSUPP.
+      CORRECTION: Binary analysis of vendor dw3000.ko on H1 confirms
+      testmode IS compiled into the vendor module despite AOSP Kbuild
+      showing it as conditional. Google's vendor build overrides the
+      generic Kbuild config.
 
-      NOTE: the .c file itself has no #ifdef guards (compiles cleanly),
-      so rebuilding with CONFIG_MCPS802154_TESTMODE=y would enable it.
-    verdict: dead_end
+      Confirmed symbols in vendor dw3000.ko:
+        dw3000_tm_cmd (T, global, at 0x23608)
+        do_tm_cmd_start_rx_diag (t, at 0x2358c)
+        do_tm_cmd_start_tx_cwtone (t, at 0x234e8)
+        do_tm_cmd_start_cont_tx (t, at 0x22fe4)
+        do_tm_cmd_get_rx_diag (t, at 0x23204)
+
+      mcps802154.ko also exports testmode reply functions and has
+      llhw_testmode_cmd tracepoint. The full CMD_TESTMODE dispatch
+      chain is present in the vendor modules.
+
+      pctt_inject --testmode SHOULD WORK on the existing device.
+      No kernel rebuild needed.
+    verdict: pending
     notes: |
       Verified via AOSP: dw3000_testmode.c is unconditionally compilable
       but conditionally linked. Fast commands (DW3000_CMD_RX=0x2) cannot
